@@ -1,9 +1,1 @@
-{
-  "firestore": { "rules": "firestore.rules", "indexes": "firestore.indexes.json" },
-  "emulators": {
-    "auth": { "port": 9099 },
-    "firestore": { "port": 8080 },
-    "ui": { "enabled": false },
-    "singleProjectMode": true
-  }
-}
+{"firestore":{"rules":"firestore.rules","indexes":"firestore.indexes.json"},"emulators":{"auth":{"port":9099},"firestore":{"port":8080},"ui":{"enabled":false},"singleProjectMode":true},"flutter":{"platforms":{"ios":{"default":{"projectId":"vigoria-fe224","appId":"1:1092988210930:ios:6d5300f08ad1caff8e4a6b","uploadDebugSymbols":false,"fileOutput":"ios/Runner/GoogleService-Info.plist"}},"dart":{"lib/firebase_options.dart":{"projectId":"vigoria-fe224","configurations":{"ios":"1:1092988210930:ios:6d5300f08ad1caff8e4a6b"}}}}}}

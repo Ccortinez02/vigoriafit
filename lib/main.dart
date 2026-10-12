@@ -2,7 +2,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/date_symbol_data_local.dart';
-
+import 'firebase_options.dart';
 import 'core/theme.dart';
 import 'pages/auth_page.dart';
 import 'pages/onboarding_page.dart';
@@ -15,7 +15,9 @@ void main() async {
   Object? startupError;
   StackTrace? startupStack;
   try {
-    await Firebase.initializeApp();
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
     await initializeDateFormatting('es', null);
     await Notifications.init();
     await AppStore.instance.load();

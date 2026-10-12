@@ -27,7 +27,15 @@ class Notifications {
       // Si la zona no está disponible, seguimos con la del sistema.
     }
     const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const initSettings = InitializationSettings(android: androidInit);
+    const iosInit = DarwinInitializationSettings(
+      requestAlertPermission: true,
+      requestBadgePermission: true,
+      requestSoundPermission: true,
+    );
+    const initSettings = InitializationSettings(
+      android: androidInit,
+      iOS: iosInit,
+    );
     await _plugin.initialize(initSettings);
     _ready = true;
   }
