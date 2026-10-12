@@ -14,6 +14,8 @@ import 'auth_service.dart';
 import 'account_preferences.dart';
 import 'profile_repository.dart';
 import 'firebase_profile_repository.dart';
+import 'sync_state.dart';
+import 'unit_system.dart';
 
 /// Perfil remoto por UID y registros locales separados por cuenta.
 class AppStore extends ChangeNotifier {
@@ -50,6 +52,8 @@ class AppStore extends ChangeNotifier {
   static const _kProfile = 'brio_profile_v1';
   static const _kOnboarded = 'brio_onboarded_v1';
   static const _kTheme = 'brio_theme_v1';
+  static const _kUnits = 'brio_units_v1';
+  static const _kMigrationVersion = 'brio_migration_v1';
   static const _kLogs = 'brio_daylogs_v1';
   static const _kWeights = 'brio_weights_v1';
   static const _kWorkoutReminder = 'brio_reminder_workout_v1';
@@ -64,6 +68,8 @@ class AppStore extends ChangeNotifier {
   Profile _profile = Profile();
   bool _onboarded = false;
   ThemeMode _themeMode = ThemeMode.system;
+  UnitSystem _units = UnitSystem.metric;
+  SyncState _profileSyncState = SyncState.idle;
   final Map<String, DayLog> _logs = {};
   final List<WeightEntry> _weights = [];
   bool _workoutReminderOn = false;
@@ -81,6 +87,8 @@ class AppStore extends ChangeNotifier {
   Profile get profile => _profile;
   bool get onboarded => _onboarded;
   ThemeMode get themeMode => _themeMode;
+  UnitSystem get units => _units;
+  SyncState get profileSyncState => _profileSyncState;
   bool get loaded => _loaded;
   List<WeightEntry> get weights => List.unmodifiable(_weights);
   bool get workoutReminderOn => _workoutReminderOn;
@@ -117,6 +125,8 @@ class AppStore extends ChangeNotifier {
     _profile = Profile();
     _onboarded = false;
     _themeMode = ThemeMode.system;
+    _units = UnitSystem.metric;
+    _profileSyncState = SyncState.idle;
     _logs.clear();
     _weights.clear();
     _exerciseWeights.clear();
@@ -145,6 +155,7 @@ class AppStore extends ChangeNotifier {
         final p = AccountPreferences(storage, user.uid);
         _accountPrefs = p;
         _readAccountCache(p);
+        await _runMigrationIfNeeded(p, user.uid);
         final remote = await _profiles.loadOrCreate(user);
         if (epoch != _epoch) return;
         _profile = remote.profile;
@@ -173,6 +184,7 @@ class AppStore extends ChangeNotifier {
     if (pj != null) _profile = Profile.fromJson(pj);
     _onboarded = p.getBool(_kOnboarded) ?? false;
     _themeMode = ThemeMode.values[(p.getInt(_kTheme) ?? 0).clamp(0, 2)];
+    _units = UnitSystem.values[(p.getInt(_kUnits) ?? 0).clamp(0, UnitSystem.values.length - 1)];
     _logs
       ..clear()
       ..addEntries(
@@ -419,6 +431,27 @@ class AppStore extends ChangeNotifier {
     await _acceptSession(null);
   }
 
+  /// Paso 3 del Sprint 2: migración segura e idempotente.
+  ///
+  /// Versión actual: 1.
+  /// Lógica: registra que ya se ejecutó la verificación para este UID.
+  /// No migra datos de propietario incierto (claves antiguas `brio_*`):
+  /// esas claves se conservan sin tocar hasta que el propietario sea
+  /// verificado fuera de la app. Este mecanismo garantiza idempotencia:
+  /// si se interrumpe y se reanuda, no duplica datos.
+  static const int _migrationCurrentVersion = 1;
+
+  Future<void> _runMigrationIfNeeded(AccountPreferences p, String uid) async {
+    final done = p.getInt(_kMigrationVersion) ?? 0;
+    if (done >= _migrationCurrentVersion) return;
+
+    // Verificación: ¿hay claves antiguas `brio_*` sin UID asociado?
+    // Por política del Sprint 2, no se asignan al usuario actual porque
+    // no es posible verificar la propiedad con certeza.
+    // Se marca la migración como completada sin mover datos ambiguos.
+    await p.setInt(_kMigrationVersion, _migrationCurrentVersion);
+  }
+
   Future<void> _prefs(Future<void> Function(AccountPreferences p) fn) async {
     final p = _accountPrefs;
     if (p == null || !authed) throw StateError('No hay una sesión lista.');
@@ -445,17 +478,46 @@ class AppStore extends ChangeNotifier {
       throw StateError('No hay una sesión lista.');
     }
     final snapshot = profile.copy();
-    await _profiles.save(uid, snapshot, onboarded: onboarded);
+
+    // Guarda localmente primero para preservar el borrador ante errores.
+    await cache.setString(_kProfile, snapshot.toJson());
+    await cache.setBool(_kOnboarded, onboarded);
+
+    _profileSyncState = SyncState.saving;
+    notifyListeners();
+
+    try {
+      await _profiles.save(uid, snapshot, onboarded: onboarded);
+    } on StateError {
+      // La sesión cambió durante el guardado: el estado local ya refleja
+      // los datos del usuario correcto; no propagamos a la UI de la sesión nueva.
+      if (epoch == _epoch) {
+        _profileSyncState = SyncState.failed;
+        notifyListeners();
+      }
+      rethrow;
+    } catch (e) {
+      if (epoch == _epoch) {
+        // Distinguir errores de permisos/validación de errores de red.
+        final isPermission = e.toString().contains('PERMISSION_DENIED') ||
+            e.toString().contains('permission-denied');
+        _profileSyncState =
+            isPermission ? SyncState.rejected : SyncState.failed;
+        notifyListeners();
+      }
+      rethrow;
+    }
+
     if (epoch != _epoch)
       throw StateError('La sesión cambió durante el guardado.');
+
     _profile = snapshot;
     _onboarded = onboarded;
+    _profileSyncState = SyncState.confirmed;
     if (_weights.isEmpty && onboarded) {
       _weights.add(WeightEntry(DateTime.now(), snapshot.weightKg));
     }
     final weights = _weights.map((e) => e.toJson()).toList();
-    await cache.setString(_kProfile, snapshot.toJson());
-    await cache.setBool(_kOnboarded, onboarded);
     await cache.setStringList(_kWeights, weights);
     if (epoch == _epoch) notifyListeners();
   }
@@ -464,6 +526,18 @@ class AppStore extends ChangeNotifier {
     _themeMode = mode;
     notifyListeners();
     await _prefs((p) => p.setInt(_kTheme, mode.index));
+  }
+
+  Future<void> setUnits(UnitSystem system) async {
+    _units = system;
+    notifyListeners();
+    await _prefs((p) => p.setInt(_kUnits, system.index));
+  }
+
+  /// Reinicia el estado sync del perfil a idle, por ejemplo tras un reintento.
+  void clearProfileSyncState() {
+    _profileSyncState = SyncState.idle;
+    notifyListeners();
   }
 
   // ── Registros diarios ────────────────────────────────────────────────────

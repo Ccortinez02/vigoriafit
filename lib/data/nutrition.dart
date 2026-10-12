@@ -93,16 +93,33 @@ class Nutrition {
         allergens: [Allergy.gluten]),
   ];
 
+  /// Devuelve ideas de comida para el objetivo y tipo indicados, filtradas
+  /// por las restricciones del perfil cuando se proporciona.
+  ///
+  /// **Sin perfil:** devuelve todos los ítems del tipo que coinciden con el
+  /// objetivo. Si no hay ninguno, amplía al tipo completo (sin objetivo).
+  ///
+  /// **Con perfil:** aplica [_isSafe] y devuelve solo los ítems seguros.
+  /// Si ninguno pasa el filtro, devuelve lista vacía — nunca hace fallback
+  /// que reintroduzca un alimento excluido.
   static List<MealIdea> forGoalAndType(Goal g, MealType t, {Profile? profile}) {
     var list = all.where((m) => m.type == t && m.goals.contains(g)).toList();
     if (list.isEmpty) list = all.where((m) => m.type == t).toList();
     if (profile != null) {
-      final safe = list.where((m) => _isSafe(m, profile)).toList();
-      if (safe.isNotEmpty) return safe;
+      // Retorna solo los seguros; lista vacía si todos están excluidos.
+      return list.where((m) => _isSafe(m, profile)).toList();
     }
     return list;
   }
 
+  /// Regla F1: excluye alérgenos declarados por el usuario.
+  /// Regla F2: excluye 'highSugar' para diabetes y prediabetes.
+  /// Regla F3: excluye 'highPotassium' para enfermedad renal.
+  /// Comportamiento ante datos faltantes: si un campo de alimento no está
+  /// declarado (lista vacía), no se activa ninguna exclusión.
+  /// Prioridad: todas las reglas son de exclusión estricta; una coincidencia
+  /// es suficiente para excluir, independientemente de otras reglas.
+  /// Fuente: enums del modelo; sin validación clínica externa.
   static bool _isSafe(MealIdea m, Profile p) {
     if (m.allergens.any(p.allergies.contains)) return false;
     if (m.dietFlags.contains('highSugar') &&
@@ -118,12 +135,15 @@ class Nutrition {
   }
 
   /// Un menú del día (1 idea por tipo de comida) para el objetivo, filtrado
-  /// por alergias/condiciones si se entrega el perfil completo.
+  /// por alergias/condiciones si se entrega el perfil.
+  ///
+  /// Si un tipo de comida no tiene alternativas seguras, no aparece en el mapa.
+  /// El llamador debe verificar si la clave existe antes de acceder.
   static Map<MealType, MealIdea> dayMenu(Goal g, {int seed = 0, Profile? profile}) {
     final menu = <MealType, MealIdea>{};
     for (final t in MealType.values) {
       final opts = forGoalAndType(g, t, profile: profile);
-      menu[t] = opts[seed % opts.length];
+      if (opts.isNotEmpty) menu[t] = opts[seed % opts.length];
     }
     return menu;
   }
