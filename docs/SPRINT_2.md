@@ -209,21 +209,61 @@ Pantallas afectadas:
 
 Comando: `flutter test --no-pub`
 
+### Suite de ediciones concurrentes (adaptadores controlables)
+
+| Suite | Pruebas | Resultado |
+|---|---|---|
+| `concurrent_saves_test.dart` | 4 | ✅ |
+
+Incluye: guardado secuencial (segundo gana), confirmación tardía fuera de orden (documentado), cambio de cuenta durante guardado (epoch protege), save1 falla / save2 confirma (save2 gana).
+
+### Pruebas de reglas Firestore (emulador real)
+
+Java 21 instalado (`openjdk@21` via Homebrew). Firebase Emulator Suite activo (Auth :9099, Firestore :8080).
+
+`npm run test:rules` → `node --test test/firestore/*.test.cjs`:
+
+| Test | Resultado |
+|---|---|
+| owner creates and reads both profile documents | ✅ |
+| anonymous and other users cannot read, write, delete or list private data | ✅ |
+| trainer role grants no access to student health profile | ✅ |
+| cannot self-assign roles or pollute schema on create and update | ✅ |
+| validate types, ranges, size and immutable timestamps on updates | ✅ |
+| orphan health documents cannot be created | ✅ |
+| ordinary user cannot create a trainer group or impersonate its owner | ✅ |
+| invitation lookup allows join without exposing group/member listings | ✅ |
+| only group trainer assigns routine; ownership cannot change | ✅ |
+| completion ownership and leaving a group enforce access | ✅ |
+| **Total** | **10 / 10 ✅** |
+
+### Pruebas de integración contra emulador (simulador iOS)
+
+`flutter test integration_test/emulator_offline_test.dart --dart-define=USE_EMULATOR=true -d 497AFAF8...` (iPhone 18 Pro, iOS 27.0):
+
+| Prueba | Resultado |
+|---|---|
+| Guardado básico: perfil llega a Firestore del emulador | ✅ |
+| Dos ediciones consecutivas: la segunda sobreescribe a la primera | ✅ |
+| Rechazo de permisos: usuario B no puede escribir perfil de usuario A | ✅ |
+| AppStore con emulador: guardado confirma en Firestore | ✅ |
+| **Total** | **4 / 4 ✅** |
+
+Distinto de los tests con adaptadores falsos: estos tests usan Firebase SDK real conectado al emulador. Verificado vía REST API del emulador.
+
 ### Análisis estático
 
 `flutter analyze --no-pub`: 0 errores, 0 warnings de producción. Solo avisos de deprecación (`withOpacity`, `activeColor`) que también estaban presentes en el Sprint 1 sin cambios del código de esta rama.
-
-### Pruebas del emulador Firestore
-
-No ejecutadas en esta sesión (requieren Docker o Java 21 en PATH + Firebase CLI). Las pruebas de reglas del Sprint 1 cubren el modelo de Firestore que no ha cambiado.
 
 ### Plataformas
 
 | Plataforma | Compilación | Ejecución funcional |
 |---|---|---|
-| iOS (Xcode / simulador) | ✅ `flutter build ios --simulator --no-codesign` exit 0 | No ejecutado: UI visual pendiente de dispositivo |
-| Android | Corrección Kotlin integrada (`org.jetbrains.kotlin.android`) | Pendiente — SDK Android no instalado en este Mac |
-| Flutter test (host) | ✅ | ✅ 59 pruebas |
+| iOS (Xcode / simulador) | ✅ `flutter build ios --simulator --dart-define=USE_EMULATOR=true` exit 0 | ✅ App instalada y lanzada en iPhone 18 Pro. Verificación visual bloqueada por diálogo de notificaciones de SpringBoard (requiere interacción manual para descartar) |
+| Android | No compilado | SDK Android no instalado — scan exhaustivo confirmado |
+| Flutter test (host) | ✅ | ✅ 63 pruebas |
+| Reglas Firestore (emulador) | ✅ | ✅ 10 pruebas |
+| Integración iOS + emulador | ✅ | ✅ 4 pruebas |
 
 ---
 
