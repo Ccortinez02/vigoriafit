@@ -213,9 +213,9 @@ Comando: `flutter test --no-pub`
 
 | Suite | Pruebas | Resultado |
 |---|---|---|
-| `concurrent_saves_test.dart` | 5 | ✅ |
+| `concurrent_saves_test.dart` | 6 | ✅ |
 
-Incluye: guardado secuencial (segundo gana), confirmación tardía fuera de orden — save2 prevalece gracias al contador `_saveGeneration` (regresión del bug corregido), cambio de cuenta durante guardado (epoch protege), save1 falla / save2 confirma (save2 gana), reintento automático fallido seguido de edición nueva (edición limpia `_kPendingWrite` correctamente).
+Incluye: guard pre-remoto (save1 no llega al servidor si save2 ya inició), guardado secuencial (segundo gana), confirmación tardía fuera de orden — save2 prevalece gracias al contador `_saveGeneration` (post-remote guard), cambio de cuenta durante guardado (epoch protege), save1 falla / save2 confirma (save2 gana), reintento automático fallido seguido de edición nueva (edición limpia `_kPendingWrite` correctamente).
 
 ### Pruebas de reglas Firestore (emulador real)
 
@@ -261,7 +261,7 @@ Distinto de los tests con adaptadores falsos: estos tests usan Firebase SDK real
 |---|---|---|
 | iOS (Xcode / simulador) | ✅ `flutter build ios --simulator --dart-define=USE_EMULATOR=true` exit 0 | ✅ App instalada y lanzada en iPhone 18 Pro. Verificación visual bloqueada por diálogo de notificaciones de SpringBoard (requiere interacción manual para descartar) |
 | Android | No compilado | SDK Android no instalado actualmente en este Mac. No se verificó si estuvo instalado anteriormente. |
-| Flutter test (host) | ✅ | ✅ 64 pruebas |
+| Flutter test (host) | ✅ | ✅ 65 pruebas |
 | Reglas Firestore (emulador) | ✅ | ✅ 10 pruebas |
 | Integración iOS + emulador | ✅ | ✅ 4 pruebas |
 

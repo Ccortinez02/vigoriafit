@@ -84,6 +84,41 @@ void main() {
 
   group('Dos guardados consecutivos', () {
     test(
+      'Guard pre-remoto: save1 no llama a _profiles.save() si save2 ya comenzó '
+      'durante las escrituras locales de save1',
+      () async {
+        await store.load();
+        await store.login('alice', 'p');
+        await store.completeOnboarding(Profile(name: 'Alice'));
+        // saveCount == 1 tras el onboarding.
+
+        final p1 = Profile(name: 'Alice v1 vieja', weightKg: 60);
+        final p2 = Profile(name: 'Alice v2 nueva', weightKg: 65);
+
+        // Lanza los dos guardados sin await entre ellos.
+        // save1 ejecuta sincrónicamente hasta su primer await (cache.setString),
+        // luego save2 comienza y en su primer statement síncrono incrementa
+        // _saveGeneration a 2. Cuando save1 reanuda y llega al guard pre-remoto
+        // (que está ANTES de llamar a _profiles.save()), detecta 1 != 2 y aborta.
+        final save1 = store.saveProfile(p1);
+        final save2 = store.saveProfile(p2);
+
+        await save1; // completa sin error (aborto limpio)
+        await save2; // confirma normalmente
+
+        // REGRESIÓN: el servidor solo recibió el guardado de save2.
+        // save1 fue abortado por el guard pre-remoto antes de llamar a _profiles.save().
+        expect(
+          profiles.saveCount,
+          2, // onboarding + save2 únicamente; save1 nunca llamó al repositorio
+          reason: 'El guard pre-remoto debe evitar que save1 escriba en el servidor',
+        );
+        expect(store.profile.name, 'Alice v2 nueva');
+        expect(store.profileSyncState, SyncState.confirmed);
+      },
+    );
+
+    test(
       'Guardado secuencial: el segundo perfil queda confirmado',
       () async {
         await store.load();

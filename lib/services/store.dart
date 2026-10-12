@@ -535,6 +535,14 @@ class AppStore extends ChangeNotifier {
     // haber cambiado mientras SharedPreferences escribía.
     if (epoch != _epoch) throw StateError('La sesión cambió durante el guardado.');
 
+    // Guarda de generación PRE-remota: si un guardado más reciente ya comenzó
+    // durante las escrituras locales, no iniciar la transacción Firestore.
+    // En Dart no hay punto de yield entre este check y el await _profiles.save(),
+    // por lo que ningún otro guardado puede incrementar _saveGeneration entre
+    // los dos. Esto evita que una transacción de datos viejos sobreescriba
+    // los datos de una edición más reciente en el servidor.
+    if (myGeneration != _saveGeneration) return;
+
     _profileSyncState = SyncState.saving;
     notifyListeners();
 
