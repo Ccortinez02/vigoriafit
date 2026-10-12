@@ -1,3 +1,5 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,6 +12,9 @@ import 'pages/root_page.dart';
 import 'services/notifications.dart';
 import 'services/store.dart';
 
+// Activado con --dart-define=USE_EMULATOR=true. Nunca activar en producción.
+const _useEmulator = bool.fromEnvironment('USE_EMULATOR');
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   Object? startupError;
@@ -18,8 +23,14 @@ void main() async {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
+    if (_useEmulator) {
+      await FirebaseAuth.instance.useAuthEmulator('localhost', 9099);
+      FirebaseFirestore.instance.useFirestoreEmulator('localhost', 8080);
+    }
     await initializeDateFormatting('es', null);
-    await Notifications.init();
+    // En modo emulador no se solicitan permisos de notificaciones para no
+    // bloquear la UI con el diálogo del sistema durante pruebas automatizadas.
+    if (!_useEmulator) await Notifications.init();
     await AppStore.instance.load();
   } catch (e, st) {
     startupError = e;
