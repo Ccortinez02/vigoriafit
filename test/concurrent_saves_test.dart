@@ -297,6 +297,76 @@ void main() {
     );
 
     test(
+      'Logout + login misma cuenta: epoch protege el estado local; '
+      'limitación documentada: sin control de versiones transaccional el remoto '
+      'puede quedar con datos viejos',
+      () async {
+        await store.load();
+        await store.login('alice', 'p');
+        await store.completeOnboarding(Profile(name: 'Alice'));
+
+        // Bloquea el guardado antiguo (sesión 1).
+        final cOld = profiles.enqueue();
+
+        final pOld = Profile(name: 'Alice vieja', weightKg: 60);
+        final saveOld = store.saveProfile(pOld); // in-flight en sesión 1
+
+        await Future<void>.delayed(Duration.zero);
+        expect(store.profileSyncState, SyncState.saving);
+
+        // La nueva sesión verá pendingWrite=true (escrito por el save anterior)
+        // y ejecutará un reintento automático. Bloqueamos ese reintento para
+        // poder controlar el orden de las escrituras remotas.
+        final cRetry = profiles.enqueue();
+
+        await store.logout();
+
+        // login() inicia _restoreAccount, que bloquea en cRetry.
+        // No hacemos await para poder controlar la secuencia.
+        final loginFut = store.login('alice', 'p');
+        await Future<void>.delayed(Duration.zero); // dejar que empiece el reintento
+
+        // PROTEGIDO: aunque una sesión esté en vuelo, la nueva sesión empieza
+        // con epoch distinto y el estado local es independiente.
+        expect(store.currentUid, 'alice');
+
+        // Completamos el reintento de la nueva sesión (escribe 'Alice vieja' — el borrador pendiente).
+        cRetry.complete();
+        await loginFut; // _restoreAccount termina: pendingWrite limpio, confirmed
+
+        expect(store.profileSyncState, SyncState.confirmed);
+
+        // La nueva sesión guarda datos distintos.
+        final pNew = Profile(name: 'Alice nueva', weightKg: 65);
+        await store.saveProfile(pNew);
+        expect(store.profile.name, 'Alice nueva');
+        expect(store.profileSyncState, SyncState.confirmed);
+
+        // Ahora completa la escritura antigua (ya desconectada de la cola nueva).
+        // En el mock, _profiles.save() de cOld sobreescribe _db con 'Alice vieja'.
+        // En Firestore real, si la transacción antigua llega al servidor después
+        // de que la nueva ya confirmó, el servidor queda con datos viejos.
+        cOld.complete();
+        await expectLater(saveOld, throwsStateError,
+            reason: 'Epoch cambió: la escritura antigua no actualiza el estado local');
+
+        // ESTADO LOCAL: protegido por epoch — siempre refleja la sesión activa.
+        expect(store.profile.name, 'Alice nueva',
+            reason: 'Epoch protege el estado local');
+        expect(store.profileSyncState, SyncState.confirmed);
+
+        // LIMITACIÓN REMOTA (demostrada con el mock): la escritura antigua que
+        // completó después sobreescribió _db. En Firestore real, la protección
+        // completa requiere control de versiones transaccional (campo version +
+        // conditional write). Documentado en docs/SPRINT_2.md.
+        expect(profiles._db['alice']!.profile.name, 'Alice vieja',
+            reason:
+                'LIMITACIÓN: la escritura antigua completó después y sobreescribió '
+                'el contenido remoto. El estado local está correcto, el remoto no.');
+      },
+    );
+
+    test(
       'Edición nueva prevalece: si save1 falla y save2 confirma, '
       'el estado queda confirmed con los datos de save2',
       () async {
