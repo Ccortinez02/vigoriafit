@@ -77,8 +77,9 @@ El estado `pending` está definido para el caso en que el SDK de Firestore encol
 
 - La transacción Firestore usa `update` sobre el documento ya existente (creado en el primer acceso). No puede crear un segundo documento para el mismo UID.
 - Un reintento del mismo borrador produce exactamente una escritura en el servidor.
-- Si una edición nueva sustituye a una pendiente anterior, el store conserva el último valor en memoria y en caché local. Un reintento antiguo (si existiera en cola) sería sobrescrito por la edición nueva.
-- En la implementación actual no hay cola explícita de reintentos: el usuario activa el reintento manualmente.
+- Si una edición nueva sustituye a una pendiente anterior, la **cola de escrituras** garantiza que la edición nueva escribe al servidor DESPUÉS de que la antigua termine. El guard de generación (`_saveGeneration`) hace que el guardado antiguo ceda el estado local al confirmado más reciente.
+- **Cola de escrituras `_saveQueue`:** implementada con `Completer<void>` en `lib/services/store.dart`. Serializa las transacciones Firestore por sesión: solo una escritura en vuelo a la vez. Cuando una edición posterior llega a la cola, espera al anterior; al obtener su turno, verifica si sigue siendo la más reciente y cede si no. Los reintentos automáticos de `_restoreAccount` también participan de la misma cola.
+- **Limitación entre dispositivos:** la cola es por sesión (instancia de `AppStore`). Dos dispositivos con la misma cuenta pueden seguir compitiendo a nivel Firestore. Last-writer-wins del servidor determina el resultado. Sin versión transaccional en el documento, no se detecta ni se resuelve automáticamente.
 
 ---
 
@@ -215,7 +216,7 @@ Comando: `flutter test --no-pub`
 |---|---|---|
 | `concurrent_saves_test.dart` | 6 | ✅ |
 
-Incluye: guard pre-remoto (save1 no llega al servidor si save2 ya inició), guardado secuencial (segundo gana), confirmación tardía fuera de orden — save2 prevalece gracias al contador `_saveGeneration` (post-remote guard), cambio de cuenta durante guardado (epoch protege), save1 falla / save2 confirma (save2 gana), reintento automático fallido seguido de edición nueva (edición limpia `_kPendingWrite` correctamente).
+Incluye: guard pre-remoto (save1 abortado antes de entrar a la cola si save2 ya comenzó), guardado secuencial (segundo confirma), cola serializa escrituras (save2 espera a save1 en la cola; resultado remoto es Alice v2 — verifica `profiles._db` explícitamente), cambio de cuenta durante guardado (epoch protege), save1 falla / save2 confirma (save2 gana y el servidor queda con v2), reintento automático fallido seguido de edición nueva (edición limpia `_kPendingWrite` correctamente).
 
 ### Pruebas de reglas Firestore (emulador real)
 
