@@ -54,6 +54,10 @@ class AppStore extends ChangeNotifier {
   static const _kTheme = 'brio_theme_v1';
   static const _kUnits = 'brio_units_v1';
   static const _kMigrationVersion = 'brio_migration_v1';
+  // Indica que hay una escritura remota pendiente para este UID.
+  // Se establece antes del intento remoto y se borra al confirmar.
+  // Permite recuperar el borrador local tras un reinicio sin sobreescribirlo.
+  static const _kPendingWrite = 'brio_pending_write_v1';
   static const _kLogs = 'brio_daylogs_v1';
   static const _kWeights = 'brio_weights_v1';
   static const _kWorkoutReminder = 'brio_reminder_workout_v1';
@@ -156,13 +160,37 @@ class AppStore extends ChangeNotifier {
         _accountPrefs = p;
         _readAccountCache(p);
         await _runMigrationIfNeeded(p, user.uid);
-        final remote = await _profiles.loadOrCreate(user);
-        if (epoch != _epoch) return;
-        _profile = remote.profile;
-        _onboarded = remote.onboarded;
-        _isTrainer = remote.trainer;
-        await p.setString(_kProfile, _profile.toJson());
-        await p.setBool(_kOnboarded, remote.onboarded);
+        final hasPending = p.getBool(_kPendingWrite) ?? false;
+        if (!hasPending) {
+          // Sin escritura pendiente: el remoto es la fuente de verdad.
+          final remote = await _profiles.loadOrCreate(user);
+          if (epoch != _epoch) return;
+          _profile = remote.profile;
+          _onboarded = remote.onboarded;
+          _isTrainer = remote.trainer;
+          await p.setString(_kProfile, _profile.toJson());
+          await p.setBool(_kOnboarded, remote.onboarded);
+        } else {
+          // Hay un borrador pendiente de confirmar: no sobreescribir con remoto.
+          // El perfil ya se cargó desde caché en _readAccountCache.
+          // Intentar sincronizar el pendiente.
+          _profileSyncState = SyncState.pending;
+          final uid2 = user.uid;
+          final snap = _profile.copy();
+          final ob = _onboarded;
+          try {
+            final remote = await _profiles.loadOrCreate(user);
+            if (epoch != _epoch) return;
+            _isTrainer = remote.trainer;
+            // Reintenta enviar el borrador al servidor.
+            await _profiles.save(uid2, snap, onboarded: ob);
+            if (epoch != _epoch) return;
+            await p.remove(_kPendingWrite);
+            _profileSyncState = SyncState.confirmed;
+          } catch (_) {
+            if (epoch == _epoch) _profileSyncState = SyncState.failed;
+          }
+        }
         if (epoch == _epoch) await _updateReminders();
       }
     } catch (_) {
@@ -482,6 +510,14 @@ class AppStore extends ChangeNotifier {
     // Guarda localmente primero para preservar el borrador ante errores.
     await cache.setString(_kProfile, snapshot.toJson());
     await cache.setBool(_kOnboarded, onboarded);
+    // Marca la escritura como pendiente ANTES del intento remoto.
+    // Si la app se reinicia antes de la confirmación, _restoreAccount
+    // detectará el flag y no sobreescribirá el borrador con el remoto.
+    await cache.setBool(_kPendingWrite, true);
+
+    // Verifica epoch después de los awaits de escritura local: la cuenta puede
+    // haber cambiado mientras SharedPreferences escribía.
+    if (epoch != _epoch) throw StateError('La sesión cambió durante el guardado.');
 
     _profileSyncState = SyncState.saving;
     notifyListeners();
@@ -519,6 +555,8 @@ class AppStore extends ChangeNotifier {
     }
     final weights = _weights.map((e) => e.toJson()).toList();
     await cache.setStringList(_kWeights, weights);
+    // Borra el flag de escritura pendiente: el servidor confirmó.
+    await cache.remove(_kPendingWrite);
     if (epoch == _epoch) notifyListeners();
   }
 

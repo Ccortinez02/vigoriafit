@@ -204,7 +204,8 @@ Pantallas afectadas:
 | `nutrition_filter_test.dart` | 10 | ✅ |
 | `unit_system_test.dart` | 13 | ✅ |
 | `sync_state_test.dart` | 10 | ✅ |
-| **Total** | **42** | **✅ Todas pasan** |
+| `persistence_restart_test.dart` | 17 | ✅ |
+| **Total** | **59** | **✅ Todas pasan** |
 
 Comando: `flutter test --no-pub`
 
@@ -220,9 +221,9 @@ No ejecutadas en esta sesión (requieren Docker o Java 21 en PATH + Firebase CLI
 
 | Plataforma | Compilación | Ejecución funcional |
 |---|---|---|
-| iOS (Xcode / simulador) | Proyecto configurado con `GoogleService-Info.plist` | Pendiente — requiere `pod install` y dispositivo/simulador |
-| Android | Corrección Kotlin integrada (`org.jetbrains.kotlin.android`) | Pendiente — requiere SDK Android en este Mac |
-| Flutter test (host) | ✅ | ✅ 42 pruebas |
+| iOS (Xcode / simulador) | ✅ `flutter build ios --simulator --no-codesign` exit 0 | No ejecutado: UI visual pendiente de dispositivo |
+| Android | Corrección Kotlin integrada (`org.jetbrains.kotlin.android`) | Pendiente — SDK Android no instalado en este Mac |
+| Flutter test (host) | ✅ | ✅ 59 pruebas |
 
 ---
 

@@ -205,11 +205,16 @@ void main() {
       expect(profiles.profiles['alice']!.profile.weightKg, 75);
       profiles.failSave = true;
       await expectLater(store.addWeight(80), throwsStateError);
+      // Durante la sesión: _profile en memoria no se actualiza tras un fallo.
       expect(store.profile.weightKg, 75);
       expect(store.weights.last.kg, 75);
       await store.logout();
       await store.login('alice', 'password');
-      expect(store.profile.weightKg, 75);
+      // Sprint 2: el borrador (80) sobrevive al reinicio gracias al flag
+      // pendingWrite y se re-sincroniza al recuperar la sesión. El valor
+      // confirmado pasa a ser 80 en local y en el repositorio remoto falso.
+      // Este comportamiento cumple el criterio 6 del sprint.
+      expect(store.profile.weightKg, 80);
     },
   );
 }
