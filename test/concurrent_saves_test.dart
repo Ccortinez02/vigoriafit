@@ -144,61 +144,58 @@ void main() {
     );
 
     test(
-      'Confirmación tardía del primero no borra ni sobrescribe el segundo: '
-      'save2 (más reciente) prevalece aunque save1 complete después',
+      'Cola serializa escrituras: save2 espera a save1 y el servidor queda '
+      'con la edición más reciente (Alice v2)',
       () async {
         await store.load();
         await store.login('alice', 'p');
         await store.completeOnboarding(Profile(name: 'Alice'));
 
-        // Bloquea el primer guardado hasta que lo liberemos.
+        // Bloquea save1 en Firestore.
         final c1 = profiles.enqueue();
 
         final p1 = Profile(name: 'Alice v1', weightKg: 60);
-        final save1 = store.saveProfile(p1); // in-flight, bloqueado
+        final save1 = store.saveProfile(p1); // in-flight, bloqueado en c1
 
-        // Espera a que save1 llegue al punto de bloqueo (saving).
         await Future<void>.delayed(Duration.zero);
         expect(store.profileSyncState, SyncState.saving);
 
-        // Bloquea también el segundo guardado.
-        final c2 = profiles.enqueue();
-
+        // save2 comienza antes de que save1 termine.
+        // La cola lo hace esperar al slot de save1 antes de escribir en Firestore.
         final p2 = Profile(name: 'Alice v2', weightKg: 65);
-        // Este escenario fuerza concurrencia interna: prueba la robustez del store.
-        // (En la app real el UI deshabilita el botón mientras _saving=true.)
-        final save2 = store.saveProfile(p2); // in-flight, bloqueado
+        final save2 = store.saveProfile(p2);
+
+        // Encola c2: save2 lo dequeue cuando llegue a _profiles.save() tras la cola.
+        final c2 = profiles.enqueue();
 
         await Future<void>.delayed(Duration.zero);
 
-        // Completa el segundo guardado PRIMERO (llegó antes al servidor).
+        // Completa save1: la cola libera a save2.
+        c1.complete();
+        await save1; // save1 completa sin tocar el estado local (generation guard)
+
+        // save2 ahora está en _profiles.save() esperando c2.
         c2.complete();
         await save2;
+
+        // REGRESIÓN: el servidor debe tener los datos de save2, no de save1.
+        // Con la cola, save2 siempre escribe DESPUÉS de save1 → prevalece.
+        expect(profiles.saveCount, 3, reason: 'onboarding + save1 + save2');
+        expect(
+          profiles._db['alice']!.profile.name,
+          'Alice v2',
+          reason: 'El servidor debe tener la edición más reciente',
+        );
+        expect(profiles._db['alice']!.profile.weightKg, 65);
         expect(store.profile.name, 'Alice v2');
+        expect(store.profile.weightKg, 65);
         expect(store.profileSyncState, SyncState.confirmed);
 
-        // Ahora completa el primer guardado (llegó tarde al servidor).
-        c1.complete();
-        await save1; // debe completar sin lanzar
-
-        // REGRESIÓN: save1 NO debe sobreescribir el estado de save2.
-        // Con el fix de _saveGeneration, save1 detecta que myGeneration < _saveGeneration
-        // y retorna sin tocar _profile, _profileSyncState ni _kPendingWrite.
-        expect(profiles.saveCount, 3); // onboarding + save1 + save2
-        expect(store.profile.name, 'Alice v2',
-            reason: 'save1 (tardío) no debe sobreescribir a save2 (más reciente)');
-        expect(store.profile.weightKg, 65,
-            reason: 'save1 (tardío) no debe sobreescribir a save2 (más reciente)');
-        expect(store.profileSyncState, SyncState.confirmed,
-            reason: 'save1 tardío no debe degradar el estado confirmed de save2');
-
-        // _kPendingWrite debe estar limpio (save2 lo borró; save1 no lo restaura).
-        // getBool usa el prefijo 'flutter.' internamente, así que aquí se omite.
         final prefs = await SharedPreferences.getInstance();
         expect(
           prefs.getBool('vigoria_v2_alice_brio_pending_write_v1'),
           isNull,
-          reason: 'save1 tardío no debe dejar _kPendingWrite activo tras la confirmación de save2',
+          reason: 'save2 confirmó y borró _kPendingWrite',
         );
       },
     );

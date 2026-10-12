@@ -49,6 +49,12 @@ class AppStore extends ChangeNotifier {
   // este contador; los guardados tardíos verifican que siguen siendo el más nuevo
   // antes de actualizar el estado en memoria y borrar _kPendingWrite.
   int _saveGeneration = 0;
+  // Cola de escrituras remotas: garantiza que las transacciones Firestore se
+  // envían en el mismo orden en que se originaron y que solo hay una en vuelo
+  // a la vez. Cuando una edición posterior llega a la cola, la anterior —si aún
+  // no terminó— no puede ya ser la "más reciente"; al obtener su turno la compara
+  // con _saveGeneration y cede sin escribir al servidor.
+  Future<void> _saveQueue = Future<void>.value();
   bool _sessionInitialized = false;
   String? _sessionError;
   String? get sessionError => _sessionError;
@@ -130,6 +136,7 @@ class AppStore extends ChangeNotifier {
     _sessionInitialized = true;
     final epoch = ++_epoch;
     _saveGeneration = 0;
+    _saveQueue = Future<void>.value();
     _account = user;
     _accountPrefs = null;
     _profile = Profile();
@@ -184,23 +191,37 @@ class AppStore extends ChangeNotifier {
           final uid2 = user.uid;
           final snap = _profile.copy();
           final ob = _onboarded;
-          // Captura la generación actual antes del primer await. Si el usuario
-          // hace una edición nueva mientras este reintento está en vuelo,
-          // _saveRemoteProfile incrementará _saveGeneration y este reintento
-          // detectará que ya no es el guardado más reciente.
+          // Captura generación y slot de cola antes del primer await.
+          // Si el usuario edita mientras el reintento está en vuelo,
+          // _saveRemoteProfile incrementará _saveGeneration; este reintento
+          // detectará que ya no es el más reciente y cederá sin escribir.
           final myRetryGen = _saveGeneration;
+          final priorRetry = _saveQueue;
+          final retrySlot = Completer<void>();
+          // Error suprimido en la cola para no contaminar el Zone si no hay
+          // guardado posterior que lo observe.
+          _saveQueue = retrySlot.future.catchError((_) {});
           try {
             final remote = await _profiles.loadOrCreate(user);
-            if (epoch != _epoch) return;
+            if (epoch != _epoch) {
+              retrySlot.complete();
+              return;
+            }
             _isTrainer = remote.trainer;
+            // Espera a cualquier guardado anterior antes de escribir.
+            await priorRetry;
+            if (epoch != _epoch || myRetryGen != _saveGeneration) {
+              retrySlot.complete();
+              return;
+            }
             // Reintenta enviar el borrador al servidor.
             await _profiles.save(uid2, snap, onboarded: ob);
-            if (epoch != _epoch) return;
-            // Una edición nueva del usuario ya comenzó: cede el control.
-            if (myRetryGen != _saveGeneration) return;
+            retrySlot.complete();
+            if (epoch != _epoch || myRetryGen != _saveGeneration) return;
             await p.remove(_kPendingWrite);
             _profileSyncState = SyncState.confirmed;
-          } catch (_) {
+          } catch (e) {
+            if (!retrySlot.isCompleted) retrySlot.completeError(e);
             if (epoch == _epoch) _profileSyncState = SyncState.failed;
           }
         }
@@ -535,30 +556,52 @@ class AppStore extends ChangeNotifier {
     // haber cambiado mientras SharedPreferences escribía.
     if (epoch != _epoch) throw StateError('La sesión cambió durante el guardado.');
 
-    // Guarda de generación PRE-remota: si un guardado más reciente ya comenzó
-    // durante las escrituras locales, no iniciar la transacción Firestore.
-    // En Dart no hay punto de yield entre este check y el await _profiles.save(),
-    // por lo que ningún otro guardado puede incrementar _saveGeneration entre
-    // los dos. Esto evita que una transacción de datos viejos sobreescriba
-    // los datos de una edición más reciente en el servidor.
+    // Guard rápido: si una edición más nueva ya comenzó durante las escrituras
+    // locales, no hace falta ni entrar en la cola.
     if (myGeneration != _saveGeneration) return;
 
     _profileSyncState = SyncState.saving;
     notifyListeners();
 
+    // Cola de escrituras por sesión: serializa las transacciones Firestore.
+    // Cada guardado encola su Future y espera al anterior antes de escribir.
+    // Al obtener su turno, revalida la generación: si ya hay un guardado
+    // posterior en espera, cede sin enviar datos viejos al servidor.
+    final priorSave = _saveQueue;
+    final mySlot = Completer<void>();
+    // La cola almacena el future con el error ya suprimido: si ningún guardado
+    // posterior llega a esperar, el error no se propaga al Zone. El slot interno
+    // (mySlot) sigue teniendo el error para que el catch a continuación lo reenvíe.
+    _saveQueue = mySlot.future.catchError((_) {});
+
+    // Espera a que el guardado anterior complete (éxito o error suprimido).
+    await priorSave;
+
+    // Revalidar tras la espera: puede que llegara una edición más nueva.
+    if (epoch != _epoch) {
+      mySlot.complete();
+      throw StateError('La sesión cambió durante el guardado.');
+    }
+    if (myGeneration != _saveGeneration) {
+      // Un guardado más reciente ya ocupa la cola — ceder sin escribir al servidor.
+      mySlot.complete();
+      return;
+    }
+
     try {
       await _profiles.save(uid, snapshot, onboarded: onboarded);
-    } on StateError {
-      // La sesión cambió durante el guardado: el estado local ya refleja
-      // los datos del usuario correcto; no propagamos a la UI de la sesión nueva.
+      mySlot.complete();
+    } on StateError catch (e) {
+      // La sesión cambió o el perfil aún no existe en el servidor.
+      mySlot.completeError(e);
       if (epoch == _epoch) {
         _profileSyncState = SyncState.failed;
         notifyListeners();
       }
       rethrow;
     } catch (e) {
+      mySlot.completeError(e);
       if (epoch == _epoch) {
-        // Distinguir errores de permisos/validación de errores de red.
         final isPermission = e.toString().contains('PERMISSION_DENIED') ||
             e.toString().contains('permission-denied');
         _profileSyncState =
@@ -568,12 +611,10 @@ class AppStore extends ChangeNotifier {
       rethrow;
     }
 
-    if (epoch != _epoch)
+    if (epoch != _epoch) {
       throw StateError('La sesión cambió durante el guardado.');
+    }
 
-    // Si un guardado más reciente ya comenzó en la misma sesión, no sobreescribir
-    // su snapshot en memoria, su estado de sincronización ni su flag pendingWrite.
-    // El guardado más reciente es quien tiene autoridad sobre el estado final.
     if (myGeneration != _saveGeneration) return;
 
     _profile = snapshot;
