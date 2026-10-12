@@ -44,6 +44,11 @@ class AppStore extends ChangeNotifier {
   Future<void> _transition = Future.value();
   Future<void> _reminderTransition = Future.value();
   int _epoch = 0;
+  // Contador por sesión que distingue entre guardados concurrentes dentro de
+  // la misma sesión (mismo epoch). Cada llamada a _saveRemoteProfile incrementa
+  // este contador; los guardados tardíos verifican que siguen siendo el más nuevo
+  // antes de actualizar el estado en memoria y borrar _kPendingWrite.
+  int _saveGeneration = 0;
   bool _sessionInitialized = false;
   String? _sessionError;
   String? get sessionError => _sessionError;
@@ -124,6 +129,7 @@ class AppStore extends ChangeNotifier {
       return _transition;
     _sessionInitialized = true;
     final epoch = ++_epoch;
+    _saveGeneration = 0;
     _account = user;
     _accountPrefs = null;
     _profile = Profile();
@@ -178,6 +184,11 @@ class AppStore extends ChangeNotifier {
           final uid2 = user.uid;
           final snap = _profile.copy();
           final ob = _onboarded;
+          // Captura la generación actual antes del primer await. Si el usuario
+          // hace una edición nueva mientras este reintento está en vuelo,
+          // _saveRemoteProfile incrementará _saveGeneration y este reintento
+          // detectará que ya no es el guardado más reciente.
+          final myRetryGen = _saveGeneration;
           try {
             final remote = await _profiles.loadOrCreate(user);
             if (epoch != _epoch) return;
@@ -185,6 +196,8 @@ class AppStore extends ChangeNotifier {
             // Reintenta enviar el borrador al servidor.
             await _profiles.save(uid2, snap, onboarded: ob);
             if (epoch != _epoch) return;
+            // Una edición nueva del usuario ya comenzó: cede el control.
+            if (myRetryGen != _saveGeneration) return;
             await p.remove(_kPendingWrite);
             _profileSyncState = SyncState.confirmed;
           } catch (_) {
@@ -501,6 +514,9 @@ class AppStore extends ChangeNotifier {
   }) async {
     final uid = currentUid;
     final epoch = _epoch;
+    // Captura la generación ANTES de cualquier await, de modo que si otro
+    // guardado comienza mientras éste está en vuelo, myGeneration < _saveGeneration.
+    final myGeneration = ++_saveGeneration;
     final cache = _accountPrefs;
     if (uid == null || cache == null || !_loaded || _sessionError != null) {
       throw StateError('No hay una sesión lista.');
@@ -546,6 +562,11 @@ class AppStore extends ChangeNotifier {
 
     if (epoch != _epoch)
       throw StateError('La sesión cambió durante el guardado.');
+
+    // Si un guardado más reciente ya comenzó en la misma sesión, no sobreescribir
+    // su snapshot en memoria, su estado de sincronización ni su flag pendingWrite.
+    // El guardado más reciente es quien tiene autoridad sobre el estado final.
+    if (myGeneration != _saveGeneration) return;
 
     _profile = snapshot;
     _onboarded = onboarded;

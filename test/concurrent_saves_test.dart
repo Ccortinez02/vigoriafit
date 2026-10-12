@@ -110,7 +110,7 @@ void main() {
 
     test(
       'Confirmación tardía del primero no borra ni sobrescribe el segundo: '
-      'el store emite el perfil correcto al terminar ambos',
+      'save2 (más reciente) prevalece aunque save1 complete después',
       () async {
         await store.load();
         await store.login('alice', 'p');
@@ -130,8 +130,8 @@ void main() {
         final c2 = profiles.enqueue();
 
         final p2 = Profile(name: 'Alice v2', weightKg: 65);
-        // Nota: en la app real el botón está deshabilitado mientras _saving=true,
-        // así que este caso prueba la robustez del store, no el flujo normal de UI.
+        // Este escenario fuerza concurrencia interna: prueba la robustez del store.
+        // (En la app real el UI deshabilita el botón mientras _saving=true.)
         final save2 = store.saveProfile(p2); // in-flight, bloqueado
 
         await Future<void>.delayed(Duration.zero);
@@ -139,27 +139,94 @@ void main() {
         // Completa el segundo guardado PRIMERO (llegó antes al servidor).
         c2.complete();
         await save2;
-        final profileAfterSave2 = store.profile.name;
-        expect(profileAfterSave2, 'Alice v2');
+        expect(store.profile.name, 'Alice v2');
+        expect(store.profileSyncState, SyncState.confirmed);
 
-        // Ahora completa el primer guardado (llegó tarde).
+        // Ahora completa el primer guardado (llegó tarde al servidor).
         c1.complete();
-        await save1;
+        await save1; // debe completar sin lanzar
 
-        // El estado final del store debe reflejar la última operación completada
-        // (en este caso save1 completó después). El remoto tiene save1.
-        // Documentamos el comportamiento observado; el UI previene este caso
-        // deshabilitando el botón durante el guardado (_saving = true).
+        // REGRESIÓN: save1 NO debe sobreescribir el estado de save2.
+        // Con el fix de _saveGeneration, save1 detecta que myGeneration < _saveGeneration
+        // y retorna sin tocar _profile, _profileSyncState ni _kPendingWrite.
         expect(profiles.saveCount, 3); // onboarding + save1 + save2
-        // El perfil en memoria es el de la última confirmación.
-        // Dado que el botón del UI está deshabilitado durante _saving,
-        // este escenario no ocurre en uso normal.
+        expect(store.profile.name, 'Alice v2',
+            reason: 'save1 (tardío) no debe sobreescribir a save2 (más reciente)');
+        expect(store.profile.weightKg, 65,
+            reason: 'save1 (tardío) no debe sobreescribir a save2 (más reciente)');
+        expect(store.profileSyncState, SyncState.confirmed,
+            reason: 'save1 tardío no debe degradar el estado confirmed de save2');
+
+        // _kPendingWrite debe estar limpio (save2 lo borró; save1 no lo restaura).
+        // getBool usa el prefijo 'flutter.' internamente, así que aquí se omite.
+        final prefs = await SharedPreferences.getInstance();
         expect(
-          [store.profile.name],
-          anyOf(contains('Alice v1'), contains('Alice v2')),
-          reason: 'El store acepta el resultado de la última confirmación; '
-              'el UI previene la concurrencia deshabilitando el botón.',
+          prefs.getBool('vigoria_v2_alice_brio_pending_write_v1'),
+          isNull,
+          reason: 'save1 tardío no debe dejar _kPendingWrite activo tras la confirmación de save2',
         );
+      },
+    );
+
+    test(
+      'Reintento automático fallido al abrir: la edición posterior del usuario '
+      'confirma correctamente y limpia _kPendingWrite',
+      () async {
+        // Simula un reinicio con borrador pendiente: _kPendingWrite=true en disco
+        // como si el guardado anterior no hubiera llegado al servidor.
+        SharedPreferences.setMockInitialValues({
+          'flutter.vigoria_v2_alice_brio_profile_v1':
+              Profile(name: 'Alice pendiente', weightKg: 70).toJson(),
+          'flutter.vigoria_v2_alice_brio_onboarded_v1': true,
+          'flutter.vigoria_v2_alice_brio_pending_write_v1': true,
+        });
+
+        // El reintento fallará (error de red simulado).
+        final cRetry = profiles.enqueue();
+
+        store = AppStore(
+          auth: auth,
+          profiles: profiles,
+          clearReminders: () async {},
+        );
+
+        // Carga el store con alice ya autenticada.
+        auth.sign('alice');
+        // ignore() evita que Dart reporte el error al Zone antes de que
+        // _profiles.save() empiece a escuchar el future. El await interno en
+        // save() sigue recibiendo el error y lo relanza normalmente.
+        cRetry.future.ignore();
+        cRetry.completeError(Exception('red caída'));
+        await store.load();
+
+        // El reintento falló: _loaded=true, estado=failed, _kPendingWrite sigue en disco.
+        expect(store.loaded, isTrue);
+        expect(store.profileSyncState, SyncState.failed);
+        final prefsAfterFail = await SharedPreferences.getInstance();
+        expect(
+          prefsAfterFail.getBool('vigoria_v2_alice_brio_pending_write_v1'),
+          isTrue,
+          reason: 'el reintento fallido no debe borrar _kPendingWrite',
+        );
+
+        // Ahora el usuario hace una nueva edición: esta es la edición que debe ganar.
+        final pNuevo = Profile(name: 'Alice nueva edición', weightKg: 75);
+        await store.saveProfile(pNuevo);
+
+        // REGRESIÓN: la edición nueva confirma correctamente.
+        expect(store.profile.name, 'Alice nueva edición');
+        expect(store.profile.weightKg, 75);
+        expect(store.profileSyncState, SyncState.confirmed);
+
+        // _kPendingWrite limpio: saveProfile lo borró al confirmar.
+        final prefsAfterSave = await SharedPreferences.getInstance();
+        expect(
+          prefsAfterSave.getBool('vigoria_v2_alice_brio_pending_write_v1'),
+          isNull,
+          reason: 'saveProfile debe borrar _kPendingWrite al confirmar',
+        );
+        // El remoto tiene los datos de la edición nueva.
+        expect(profiles._db['alice']!.profile.name, 'Alice nueva edición');
       },
     );
 
