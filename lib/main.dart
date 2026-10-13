@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'firebase_options.dart';
 import 'core/theme.dart';
+import 'debug/network_controller.dart';
 import 'pages/auth_page.dart';
 import 'pages/onboarding_page.dart';
 import 'pages/root_page.dart';
@@ -26,6 +27,10 @@ void main() async {
     if (_useEmulator) {
       await FirebaseAuth.instance.useAuthEmulator('localhost', 9099);
       FirebaseFirestore.instance.useFirestoreEmulator('localhost', 8080);
+      // Aplicar flags de prueba ANTES de cargar el perfil para que el estado
+      // de red esté listo cuando _restoreAccount empiece a llamar a Firestore.
+      await DebugNetworkController.applyStartupFlags();
+      await DebugNetworkController.start();
     }
     await initializeDateFormatting('es', null);
     // En modo emulador no se solicitan permisos de notificaciones para no
