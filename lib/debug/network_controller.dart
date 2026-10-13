@@ -67,13 +67,9 @@ class DebugNetworkController {
     try {
       switch (req.uri.path) {
         case '/firestore/disable':
-          // ignore: avoid_print
-          print('[NET][${DateTime.now().toIso8601String()}] disableNetwork START');
           await FirebaseFirestore.instance.disableNetwork();
           _networkEnabled = false;
-          // ignore: avoid_print
-          print('[NET][${DateTime.now().toIso8601String()}] disableNetwork DONE');
-          req.response.write('{"network":"disabled","ts":"${DateTime.now().toIso8601String()}"}');
+          req.response.write('{"network":"disabled"}');
         case '/firestore/enable':
           await FirebaseFirestore.instance.enableNetwork();
           _networkEnabled = true;
