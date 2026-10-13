@@ -74,20 +74,36 @@ class FirebaseProfileRepository implements ProfileRepository {
   }) async {
     final ref = _db.collection('users').doc(uid);
     // A transaction fails offline instead of silently queuing a profile overwrite.
-    await _db
-        .runTransaction((tx) async {
-          final current = await tx.get(ref);
-          if (!current.exists) throw StateError('Primero recupera el perfil.');
-          tx.update(ref, {
-            ..._basic(profile),
-            'onboarded': onboarded,
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
-          tx.set(ref.collection('private').doc('health_profile'), {
-            ..._private(profile),
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
-        })
-        .timeout(const Duration(seconds: 20));
+    // ignore: avoid_print
+    print('[REPO][${DateTime.now().toIso8601String()}] runTransaction START');
+    try {
+      await _db
+          .runTransaction((tx) async {
+            // ignore: avoid_print
+            print('[REPO][${DateTime.now().toIso8601String()}] tx callback START');
+            final current = await tx.get(ref);
+            // ignore: avoid_print
+            print('[REPO][${DateTime.now().toIso8601String()}] tx.get DONE exists=${current.exists}');
+            if (!current.exists) throw StateError('Primero recupera el perfil.');
+            tx.update(ref, {
+              ..._basic(profile),
+              'onboarded': onboarded,
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
+            tx.set(ref.collection('private').doc('health_profile'), {
+              ..._private(profile),
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
+            // ignore: avoid_print
+            print('[REPO][${DateTime.now().toIso8601String()}] tx callback END (writes queued)');
+          })
+          .timeout(const Duration(seconds: 20));
+      // ignore: avoid_print
+      print('[REPO][${DateTime.now().toIso8601String()}] runTransaction FUTURE RESOLVED (success)');
+    } catch (e) {
+      // ignore: avoid_print
+      print('[REPO][${DateTime.now().toIso8601String()}] runTransaction FUTURE REJECTED: $e');
+      rethrow;
+    }
   }
 }

@@ -551,6 +551,8 @@ class AppStore extends ChangeNotifier {
     // Si la app se reinicia antes de la confirmación, _restoreAccount
     // detectará el flag y no sobreescribirá el borrador con el remoto.
     await cache.setBool(_kPendingWrite, true);
+    // ignore: avoid_print
+    print('[STORE][${DateTime.now().toIso8601String()}] pendingWrite SET (local writes done)');
 
     // Verifica epoch después de los awaits de escritura local: la cuenta puede
     // haber cambiado mientras SharedPreferences escribía.
@@ -626,6 +628,8 @@ class AppStore extends ChangeNotifier {
     final weights = _weights.map((e) => e.toJson()).toList();
     await cache.setStringList(_kWeights, weights);
     // Borra el flag de escritura pendiente: el servidor confirmó.
+    // ignore: avoid_print
+    print('[STORE][${DateTime.now().toIso8601String()}] pendingWrite CLEAR (server confirmed)');
     await cache.remove(_kPendingWrite);
     if (epoch == _epoch) notifyListeners();
   }

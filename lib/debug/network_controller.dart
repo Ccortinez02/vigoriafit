@@ -27,10 +27,20 @@ class DebugNetworkController {
   static HttpServer? _server;
   static bool _networkEnabled = true;
 
-  /// Verifica la clave de inicio-offline antes de que AppStore cargue.
-  /// Debe llamarse ANTES de AppStore.instance.load() para garantizar que
-  /// _restoreAccount comienza con la red ya deshabilitada.
+  /// Lleva el SDK a un estado de red conocido (habilitado) y luego aplica
+  /// el flag de inicio-offline si estaba programado.
+  ///
+  /// El enableNetwork() inicial es necesario porque en un hot restart de Dart
+  /// la instancia nativa de Firebase persiste: _networkEnabled se resetea al
+  /// valor por defecto (true) pero el SDK nativo puede tener disableNetwork()
+  /// activo de una llamada anterior. Sin el enableNetwork() explícito, el
+  /// estado real y el flag Dart divergen silenciosamente.
+  ///
+  /// Debe llamarse ANTES de AppStore.instance.load().
   static Future<void> applyStartupFlags() async {
+    // Sincronizar al estado conocido antes de leer el flag.
+    await FirebaseFirestore.instance.enableNetwork();
+    _networkEnabled = true;
     final prefs = await SharedPreferences.getInstance();
     if (prefs.getBool(_kStartOffline) == true) {
       await prefs.remove(_kStartOffline);
@@ -57,9 +67,13 @@ class DebugNetworkController {
     try {
       switch (req.uri.path) {
         case '/firestore/disable':
+          // ignore: avoid_print
+          print('[NET][${DateTime.now().toIso8601String()}] disableNetwork START');
           await FirebaseFirestore.instance.disableNetwork();
           _networkEnabled = false;
-          req.response.write('{"network":"disabled"}');
+          // ignore: avoid_print
+          print('[NET][${DateTime.now().toIso8601String()}] disableNetwork DONE');
+          req.response.write('{"network":"disabled","ts":"${DateTime.now().toIso8601String()}"}');
         case '/firestore/enable':
           await FirebaseFirestore.instance.enableNetwork();
           _networkEnabled = true;

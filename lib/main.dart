@@ -27,11 +27,6 @@ void main() async {
     if (_useEmulator) {
       await FirebaseAuth.instance.useAuthEmulator('localhost', 9099);
       FirebaseFirestore.instance.useFirestoreEmulator('localhost', 8080);
-      // Sin persistencia offline en el emulador: runTransaction() falla
-      // inmediatamente sin red en vez de encolar en silencio, lo que permite
-      // verificar el mecanismo _kPendingWrite de forma determinista.
-      FirebaseFirestore.instance.settings =
-          const Settings(persistenceEnabled: false);
       // Aplicar flags de prueba ANTES de cargar el perfil para que el estado
       // de red esté listo cuando _restoreAccount empiece a llamar a Firestore.
       await DebugNetworkController.applyStartupFlags();

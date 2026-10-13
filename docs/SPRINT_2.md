@@ -284,7 +284,17 @@ Entorno: iPhone 18 Pro (simulador 497AFAF8), Firebase Emulator Suite (Auth :9099
 | 5. Reactivación de red + retry | ✅ |
 | 6. Firestore pasa a B; `_kPendingWrite` limpiado solo tras confirmación | ✅ |
 
-**Nota técnica — `persistenceEnabled: false` en modo emulador:** con persistencia offline activa (default iOS), `runTransaction()` encola la escritura localmente y devuelve la promesa como éxito — el código llega a `cache.remove(_kPendingWrite)` antes de que el servidor confirme. Al deshabilitar la persistencia en modo emulador, `runTransaction()` falla realmente sin red, activando el camino de error y dejando `_kPendingWrite=true`. En producción, donde la latencia de red es real, `runTransaction()` también falla (no encola) porque el SDK no puede alcanzar el servidor dentro del timeout de 20 s. La persistencia se deja activa en producción; en el emulador se deshabilita exclusivamente para poder verificar el mecanismo de forma determinista.
+**Comportamiento confirmado del SDK (cloud_firestore 5.6.12 / Firebase iOS SDK):** con `disableNetwork()` activo, `runTransaction()` bloquea en `tx.get(ref)` hasta que el timeout de 20 s se dispara, devolviendo `TimeoutException`. No encola silenciosamente: el Future rechaza con error, el código entra en el bloque `catch`, y `_kPendingWrite` permanece en disco. La persistencia offline activa (configuración de producción) no altera este comportamiento.
+
+Log de instrumentación (timestamps UTC):
+```
+[STORE][00:22:44.112] pendingWrite SET
+[REPO][00:22:44.113] runTransaction START
+[REPO][00:22:44.117] tx callback START (tx.get sin respuesta)
+[REPO][00:23:04.118] REJECTED TimeoutException after 0:00:20.000000
+```
+
+**Causa de los primeros intentos fallidos:** `disableNetwork()` se llamó sobre una instancia de proceso que fue reemplazada por una reinstalación completa (`flutter run` cold install). El proceso nuevo arranca con el Firebase iOS SDK en estado inicial (red habilitada); el disable anterior no tiene efecto. El mecanismo sólo funcionó cuando el disable persistió a través de un hot restart (mismo proceso iOS, Dart VM reiniciado). Corrección: `applyStartupFlags()` llama `enableNetwork()` al inicio para sincronizar el estado nativo con el flag Dart, eliminando la divergencia. El flujo de prueba correcto es llamar `disableNetwork()` sobre el proceso activo y editar en el mismo proceso, o usar el flag `_debug_start_offline` con restart completo del proceso.
 
 ---
 
