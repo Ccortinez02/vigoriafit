@@ -252,39 +252,39 @@ Java 21 instalado (`openjdk@21` via Homebrew). Firebase Emulator Suite activo (A
 
 Distinto de los tests con adaptadores falsos: estos tests usan Firebase SDK real conectado al emulador. Verificado vía REST API del emulador.
 
-### Prueba de disco: arranque offline, kill de proceso y recuperación
+### Prueba de disco: edición pendiente offline, kill de proceso y recuperación
 
-Objetivo: verificar que el perfil persiste en disco tras un kill abrupto del proceso, que la app arranca correctamente sin red, y que el reintento recupera el perfil del servidor al restablecer la conexión.
+Objetivo: verificar que una edición no confirmada (B) persiste en disco tras un kill abrupto, que la app arranca sin red mostrando el borrador pendiente, y que el reintento lleva B a Firestore limpiando el flag únicamente tras la confirmación.
 
-Entorno: iPhone 18 Pro (simulador 497AFAF8), Firebase Emulator Suite (Auth :9099, Firestore :8080), `flutter run --dart-define=USE_EMULATOR=true`, `DebugNetworkController` en loopback:7777.
+Entorno: iPhone 18 Pro (simulador 497AFAF8), Firebase Emulator Suite (Auth :9099, Firestore :8080), `flutter run --dart-define=USE_EMULATOR=true`, `DebugNetworkController` en loopback:7777, `persistenceEnabled: false` en modo emulador (ver nota técnica).
 
 **Secuencia ejecutada:**
 
-1. App en ejecución con sesión activa (usuario `prueba@gmail.com`, UID `Of23kt5loNGEXoCmiVptqLtcfTp7`, perfil "Prueba2" confirmado en Firestore).
-2. `GET /firestore/disable` → `{"network":"disabled"}`. Firestore sin red.
-3. Usuario edita nombre → "Prueba3" → pulsa Guardar. La transacción completó con éxito (timing: el emulador en localhost resuelve la transacción antes de que `disableNetwork()` propague su estado; ver limitación abajo).
-4. Firestore emulador: `name=Prueba3`, `updateTime=2026-10-13T02:25:58`.
-5. `GET /firestore/set_start_offline` → `{"scheduled":true}`. Flag `_debug_start_offline=true` escrito en SharedPreferences.
-6. `xcrun simctl terminate` → kill abrupto del proceso.
-7. Lectura del plist post-kill: `profile_v1="Prueba3"` ✅, `_debug_start_offline=true` ✅. Los datos sobreviven al kill.
-8. `xcrun simctl launch` → app arranca. `applyStartupFlags()` lee `_debug_start_offline=true`, lo elimina del plist y llama `disableNetwork()` antes de `AppStore.load()`.
-9. `_restoreAccount` intenta `loadOrCreate(Source.server)` → falla offline → app muestra "No pudimos recuperar tu perfil" (pantalla `sessionError`). ✅
-10. Plist post-arranque: `_debug_start_offline` ausente (consumido) ✅, `profile_v1="Prueba3"` ✅.
-11. `GET /firestore/enable` → red activa. `GET /app/retry_profile` → `retryProfile()` ejecutado.
-12. `retryProfile` carga "Prueba3" desde el servidor → pantalla principal restaurada ✅.
-13. Plist final: `profile_v1="Prueba3"` ✅, `_brio_pending_write_v1` ausente (no había escritura pendiente) ✅.
-14. Firestore final: `name=Prueba3` ✅ (sin cambios desde el paso 4).
+1. App en pantalla principal, sesión activa (`prueba@gmail.com`, UID `Of23kt5loNGEXoCmiVptqLtcfTp7`). Firestore confirmado: `name="Prueba3"` (valor A).
+2. `GET /firestore/disable` → `{"network":"disabled"}`. `await disableNetwork()` completa antes de devolver respuesta.
+3. Usuario edita nombre → "Prueba4" (valor B) → pulsa Guardar.
+4. La transacción falla: `runTransaction()` no puede alcanzar el servidor (sin persistencia offline el SDK no encola). UI muestra banner rojo "No se pudo sincronizar".
+5. Plist post-fallo: `profile_v1="Prueba4"` ✅, `_brio_pending_write_v1=true` ✅. Firestore: `name="Prueba3"` ✅ (sin cambios).
+6. `GET /firestore/set_start_offline` → `_debug_start_offline=true` en plist.
+7. `xcrun simctl terminate` → kill abrupto.
+8. Plist post-kill: `profile_v1="Prueba4"` ✅, `_brio_pending_write_v1=true` ✅, `_debug_start_offline=true` ✅. Tres flags sobreviven.
+9. `xcrun simctl launch` → app arranca. `applyStartupFlags()` consume `_debug_start_offline`, llama `disableNetwork()` antes de `AppStore.load()`.
+10. `_restoreAccount` detecta `hasPending=true`, carga perfil desde SharedPreferences ("Prueba4"), muestra **pantalla principal** con el borrador pendiente. El reintento falla offline → `_profileSyncState=failed`. `pendingWrite` permanece en disco.
+11. Plist post-arranque: `_debug_start_offline` ausente (consumido) ✅, `profile_v1="Prueba4"` ✅, `_brio_pending_write_v1=true` ✅.
+12. `GET /firestore/enable` → red activa. `GET /app/retry_profile` → `retryProfile()` ejecutado.
+13. `retryProfile` carga perfil del servidor, reenvía B → Firestore actualizado: `name="Prueba4"`, `updateTime=2026-10-13T03:12:12`.
+14. Plist post-confirmación: `_brio_pending_write_v1` ausente (borrado únicamente tras confirmación) ✅.
 
 | Verificación | Resultado |
 |---|---|
-| Datos sobreviven al kill del proceso | ✅ |
-| `_debug_start_offline` consumido → `disableNetwork()` antes de `load()` | ✅ |
-| `loadOrCreate(Source.server)` falla offline → pantalla de error de sesión | ✅ |
-| `retryProfile()` con red activa recupera el perfil del servidor | ✅ |
-| Pantalla principal restaurada con datos correctos | ✅ |
-| `_kPendingWrite` ausente cuando la edición confirmó antes del kill | ✅ |
+| 1. Edición B guardada localmente como pendiente; Firestore conserva A | ✅ |
+| 2. Kill completo del proceso; datos no borrados | ✅ |
+| 3. Arranque sin red; borrador B y estado pendiente presentes | ✅ |
+| 4. App muestra borrador pendiente (pantalla principal, no error de sesión) | ✅ |
+| 5. Reactivación de red + retry | ✅ |
+| 6. Firestore pasa a B; `_kPendingWrite` limpiado solo tras confirmación | ✅ |
 
-**Limitación de timing con el emulador:** `disableNetwork()` deshabilita la conexión del SDK a nivel de transporte. Con el emulador en localhost, las transacciones Firestore completan en <5 ms; el estado "deshabilitado" no propaga lo suficientemente rápido como para bloquear una transacción ya iniciada. En consecuencia, la prueba de "edición guardada offline con `_kPendingWrite` activo" no pudo ejecutarse con el emulador local. El mecanismo `_kPendingWrite` está cubierto por el test unitario 4 de `concurrent_saves_test.dart` (reintento fallido seguido de edición nueva). Con un servidor Firestore remoto (latencia real), `disableNetwork()` sí bloquearía la transacción desde el inicio.
+**Nota técnica — `persistenceEnabled: false` en modo emulador:** con persistencia offline activa (default iOS), `runTransaction()` encola la escritura localmente y devuelve la promesa como éxito — el código llega a `cache.remove(_kPendingWrite)` antes de que el servidor confirme. Al deshabilitar la persistencia en modo emulador, `runTransaction()` falla realmente sin red, activando el camino de error y dejando `_kPendingWrite=true`. En producción, donde la latencia de red es real, `runTransaction()` también falla (no encola) porque el SDK no puede alcanzar el servidor dentro del timeout de 20 s. La persistencia se deja activa en producción; en el emulador se deshabilita exclusivamente para poder verificar el mecanismo de forma determinista.
 
 ---
 
