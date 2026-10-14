@@ -16,6 +16,7 @@ import 'profile_repository.dart';
 import 'firebase_profile_repository.dart';
 import 'sync_state.dart';
 import 'unit_system.dart';
+import 'workout_session_service.dart';
 
 /// Perfil remoto por UID y registros locales separados por cuenta.
 class AppStore extends ChangeNotifier {
@@ -23,6 +24,7 @@ class AppStore extends ChangeNotifier {
     required AccountAuth auth,
     required ProfileRepository profiles,
     Future<void> Function()? clearReminders,
+    WorkoutSessionService? sessionService,
   }) : _auth = auth,
        _profiles = profiles,
        _clearReminders =
@@ -30,11 +32,16 @@ class AppStore extends ChangeNotifier {
            (() async {
              await Notifications.cancelWorkout();
              await Notifications.cancelWater();
-           });
+           }),
+       sessions = sessionService ?? WorkoutSessionService();
   static final AppStore instance = AppStore(
     auth: FirebaseAccountAuth(),
     profiles: FirebaseProfileRepository(),
   );
+
+  /// Servicio de sesiones de entrenamiento. Expuesto para que las páginas
+  /// puedan suscribirse y llamar sus operaciones.
+  final WorkoutSessionService sessions;
   final AccountAuth _auth;
   final ProfileRepository _profiles;
   final Future<void> Function() _clearReminders;
@@ -99,6 +106,9 @@ class AppStore extends ChangeNotifier {
   String? _groupCode;
   bool _loaded = false;
 
+  /// Preferencias del usuario actual. Null si no hay sesión activa.
+  AccountPreferences? get currentPrefs => _accountPrefs;
+
   Profile get profile => _profile;
   bool get onboarded => _onboarded;
   ThemeMode get themeMode => _themeMode;
@@ -158,6 +168,7 @@ class AppStore extends ChangeNotifier {
     _workoutMinute = 0;
     _loaded = false;
     _sessionError = null;
+    sessions.clearForUser();
     notifyListeners();
     return _transition = _restoreAccount(user, epoch);
   }
@@ -172,6 +183,8 @@ class AppStore extends ChangeNotifier {
         final p = AccountPreferences(storage, user.uid);
         _accountPrefs = p;
         _readAccountCache(p);
+        await sessions.loadForUser(p);
+        if (epoch != _epoch) return;
         await _runMigrationIfNeeded(p, user.uid);
         final hasPending = p.getBool(_kPendingWrite) ?? false;
         if (!hasPending) {

@@ -29,6 +29,14 @@ service cloud.firestore {
         && d.allergies is list && d.allergies.size() <= 6 && d.allergies.hasOnly([0,1,2,3,4,5])
         && d.updatedAt == request.time;
     }
+    function validSession(d) {
+      return d.keys().hasAll(['workoutId','workoutTitle','startedAt','status','exercises','totalSeries'])
+        && text(d.workoutId, 128) && text(d.workoutTitle, 200)
+        && d.startedAt is timestamp
+        && d.status is int && d.status >= 0 && d.status <= 2
+        && d.exercises is list && d.exercises.size() <= 30
+        && d.totalSeries is int && d.totalSeries >= 0 && d.totalSeries <= 500;
+    }
     match /users/{uid} {
       allow get: if owner(uid);
       allow list, delete: if false;
@@ -40,6 +48,18 @@ service cloud.firestore {
         allow list, delete: if false;
         allow create, update: if owner(uid) && id == 'health_profile'
           && existsAfter(/databases/$(database)/documents/users/$(uid)) && validHealth(request.resource.data);
+      }
+      match /workout_sessions/{sessionId} {
+        allow get, list: if owner(uid);
+        allow delete: if false;
+        // Crear: solo el propietario, con datos válidos. El sessionId no puede cambiar.
+        allow create: if owner(uid) && validSession(request.resource.data)
+          && request.resource.data.status == 1; // 1 = finished
+        // Actualizar: solo mientras el status remoto sea finished y no cambie a otro
+        // (idempotencia: reintento no altera una sesión ya confirmada).
+        allow update: if owner(uid) && validSession(request.resource.data)
+          && resource.data.status == 1 && request.resource.data.status == 1
+          && request.resource.data.startedAt == resource.data.startedAt;
       }
     }
     function groupOwner(gid) {

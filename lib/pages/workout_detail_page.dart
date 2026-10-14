@@ -7,6 +7,7 @@ import '../models/exercise_log.dart';
 import '../models/workout.dart';
 import '../services/store.dart';
 import '../services/trainer_service.dart';
+import 'workout_session_page.dart';
 
 /// Detalle de una rutina: lista de ejercicios y botón para marcarla completada.
 class WorkoutDetailPage extends StatelessWidget {
@@ -64,6 +65,13 @@ class WorkoutDetailPage extends StatelessWidget {
                   (e) => _exercise(context, e.key + 1, e.value),
                 ),
                 const SizedBox(height: 24),
+                // Botón principal: iniciar sesión
+                SizedBox(
+                  width: double.infinity,
+                  child: _StartButton(workout: workout),
+                ),
+                const SizedBox(height: 10),
+                // Marcado rápido (retrocompatible con el flujo anterior)
                 SizedBox(
                   width: double.infinity,
                   child: done
@@ -73,14 +81,14 @@ class WorkoutDetailPage extends StatelessWidget {
                             Icons.check_circle_rounded,
                             color: AppColors.success,
                           ),
-                          label: const Text('Completado · deshacer'),
+                          label: const Text('Marcado hoy · deshacer'),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: AppColors.success,
                             side: const BorderSide(color: AppColors.success),
-                            padding: const EdgeInsets.symmetric(vertical: 15),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
                           ),
                         )
-                      : ElevatedButton.icon(
+                      : OutlinedButton.icon(
                           onPressed: () {
                             s.toggleWorkoutDone(workout.id);
                             if (s.inGroup && s.groupId != null) {
@@ -93,14 +101,14 @@ class WorkoutDetailPage extends StatelessWidget {
                             }
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
-                                content: Text(
-                                  '¡Bien ahí! Entreno completado 🔥',
-                                ),
-                              ),
+                                  content: Text('Rutina marcada como hecha.')),
                             );
                           },
                           icon: const Icon(Icons.check_rounded),
-                          label: const Text('Marcar como completado'),
+                          label: const Text('Marcar hecho (sin sesión)'),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
                         ),
                 ),
               ],
@@ -638,6 +646,108 @@ class WorkoutDetailPage extends StatelessWidget {
     if (diff == 0) return 'Hoy';
     if (diff == 1) return 'Ayer';
     return '${d.day}/${d.month}';
+  }
+}
+
+// ── Botón para iniciar una sesión real ──────────────────────────────────────
+
+class _StartButton extends StatefulWidget {
+  final Workout workout;
+  const _StartButton({required this.workout});
+
+  @override
+  State<_StartButton> createState() => _StartButtonState();
+}
+
+class _StartButtonState extends State<_StartButton> {
+  bool _starting = false;
+
+  Future<void> _start() async {
+    if (_starting) return;
+    final s = AppStore.instance;
+    final uid = s.currentUid;
+    final prefs = s.currentPrefs;
+    if (uid == null || prefs == null) return;
+
+    final existing = s.sessions.activeSession;
+    if (existing != null && existing.workoutId != widget.workout.id) {
+      final resume = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Sesión en curso'),
+          content: Text(
+              'Tienes una sesión activa de "${existing.workoutTitle}". ¿Qué quieres hacer?'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Retomarla')),
+            TextButton(
+                style: TextButton.styleFrom(
+                    foregroundColor: AppColors.danger),
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancelarla e iniciar nueva')),
+          ],
+        ),
+      );
+      if (!mounted) return;
+      if (resume == null) return;
+      if (resume) {
+        Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const WorkoutSessionPage()));
+        return;
+      }
+      // Cancela la existente
+      await s.sessions.cancelSession(prefs);
+      if (!mounted) return;
+    }
+
+    _starting = true;
+    setState(() {});
+    try {
+      await s.sessions.startSession(widget.workout, uid, prefs);
+      if (!mounted) return;
+      await Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const WorkoutSessionPage()));
+      if (!mounted) return;
+      // Marcado automático si la sesión se finalizó con éxito
+      if (s.sessions.activeSession == null) {
+        if (!s.isWorkoutDoneToday(widget.workout.id)) {
+          await s.toggleWorkoutDone(widget.workout.id);
+        }
+        if (s.inGroup && s.groupId != null) {
+          TrainerService.logCompletion(
+            s.groupId!,
+            s.localUserId,
+            s.profile.name,
+            widget.workout,
+          );
+        }
+      }
+    } finally {
+      if (mounted) setState(() => _starting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasActive = AppStore.instance.sessions.activeSession != null;
+    final sameWorkout =
+        AppStore.instance.sessions.activeSession?.workoutId == widget.workout.id;
+    return ElevatedButton.icon(
+      onPressed: _starting ? null : _start,
+      icon: _starting
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                  strokeWidth: 2, color: Colors.white))
+          : Icon(hasActive && sameWorkout
+              ? Icons.play_arrow_rounded
+              : Icons.fitness_center_rounded),
+      label: Text(hasActive && sameWorkout
+          ? 'Retomar sesión'
+          : 'Iniciar entrenamiento'),
+    );
   }
 }
 

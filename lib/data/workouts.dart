@@ -1,5 +1,6 @@
 import '../models/profile.dart';
 import '../models/workout.dart';
+import '../models/workout_session.dart';
 
 /// Catálogo de rutinas de VigoriaFit y selección según el perfil del usuario.
 class Workouts {
@@ -15,13 +16,19 @@ class Workouts {
       needsGym: false,
       goal: Goal.health,
       exercises: [
-        Exercise('Sentadillas', '3 x 15', '', 'squat'),
-        Exercise('Flexiones (o de rodillas)', '3 x 10', '', 'pushup'),
-        Exercise('Plancha', '3 x 30 seg', '', 'plank'),
-        Exercise('Zancadas', '3 x 12 c/pierna', '', 'lunge'),
-        Exercise('Puente de glúteo', '3 x 15', '', 'glute_bridge'),
-        Exercise('Mountain climbers', '3 x 30 seg', '', 'mountain_climber',
-            [HealthCondition.lesionRodilla]),
+        Exercise('Sentadillas', '3 x 15', '', 'squat', [],
+            60, TrackingType.reps),
+        Exercise('Flexiones (o de rodillas)', '3 x 10', '', 'pushup', [],
+            60, TrackingType.reps),
+        Exercise('Plancha', '3 x 30 seg', '', 'plank', [],
+            45, TrackingType.duration),
+        Exercise('Zancadas', '3 x 12 c/pierna', '', 'lunge', [],
+            60, TrackingType.reps),
+        Exercise('Puente de glúteo', '3 x 15', '', 'glute_bridge', [],
+            45, TrackingType.reps),
+        Exercise('Mountain climbers', '3 x 30 seg', '',
+            'mountain_climber', [HealthCondition.lesionRodilla],
+            45, TrackingType.duration),
       ],
     ),
     Workout(
@@ -31,15 +38,21 @@ class Workouts {
       minutes: 20,
       needsGym: false,
       goal: Goal.loseFat,
+      level: Level.intermediate,
       exercises: [
-        Exercise('Jumping jacks', '40 seg', 'Descansa 20 seg entre cada uno',
-            'jumping_jack', [HealthCondition.lesionRodilla]),
-        Exercise('Burpees', '40 seg', '', 'squat', [HealthCondition.lesionRodilla]),
-        Exercise('Rodillas al pecho', '40 seg', '', 'run', [HealthCondition.lesionRodilla]),
+        Exercise('Jumping jacks', '40 seg',
+            'Descansa 20 seg entre cada uno', 'jumping_jack',
+            [HealthCondition.lesionRodilla], 20, TrackingType.duration),
+        Exercise('Burpees', '40 seg', '', 'squat',
+            [HealthCondition.lesionRodilla], 20, TrackingType.duration),
+        Exercise('Rodillas al pecho', '40 seg', '', 'run',
+            [HealthCondition.lesionRodilla], 20, TrackingType.duration),
         Exercise('Sentadilla con salto', '40 seg', '', 'squat',
-            [HealthCondition.lesionRodilla]),
-        Exercise('Plancha con toque de hombro', '40 seg', '', 'plank'),
-        Exercise('Repetir el circuito', '4 vueltas', '', 'run'),
+            [HealthCondition.lesionRodilla], 20, TrackingType.duration),
+        Exercise('Plancha con toque de hombro', '40 seg', '', 'plank', [],
+            20, TrackingType.duration),
+        Exercise('Repetir el circuito', '4 vueltas', '', 'run', [],
+            60, TrackingType.reps),
       ],
     ),
     Workout(
@@ -50,11 +63,16 @@ class Workouts {
       needsGym: false,
       goal: Goal.maintain,
       exercises: [
-        Exercise('Crunch', '3 x 20', '', 'crunch'),
-        Exercise('Elevación de piernas', '3 x 15', '', 'crunch'),
-        Exercise('Plancha lateral', '3 x 25 seg c/lado', '', 'plank'),
-        Exercise('Bicicleta', '3 x 30 seg', '', 'crunch'),
-        Exercise('Plancha', '3 x 40 seg', '', 'plank'),
+        Exercise('Crunch', '3 x 20', '', 'crunch', [],
+            45, TrackingType.reps),
+        Exercise('Elevación de piernas', '3 x 15', '', 'crunch', [],
+            45, TrackingType.reps),
+        Exercise('Plancha lateral', '3 x 25 seg c/lado', '', 'plank', [],
+            45, TrackingType.duration),
+        Exercise('Bicicleta', '3 x 30 seg', '', 'crunch', [],
+            45, TrackingType.duration),
+        Exercise('Plancha', '3 x 40 seg', '', 'plank', [],
+            45, TrackingType.duration),
       ],
     ),
     // ── En gimnasio ────────────────────────────────────────────────────────
@@ -65,13 +83,20 @@ class Workouts {
       minutes: 50,
       needsGym: true,
       goal: Goal.gainMuscle,
+      level: Level.intermediate,
       exercises: [
-        Exercise('Press banca', '4 x 8-10', '', 'bench_press'),
-        Exercise('Remo con barra', '4 x 10', '', 'row', [HealthCondition.lesionEspalda]),
-        Exercise('Press militar', '3 x 10', '', 'shoulder_press'),
-        Exercise('Jalón al pecho', '3 x 12', '', 'row'),
-        Exercise('Curl bíceps', '3 x 12', '', 'bicep_curl'),
-        Exercise('Extensión tríceps polea', '3 x 12', '', 'bicep_curl'),
+        Exercise('Press banca', '4 x 8-10', '', 'bench_press', [],
+            90, TrackingType.repsAndLoad),
+        Exercise('Remo con barra', '4 x 10', '', 'row',
+            [HealthCondition.lesionEspalda], 90, TrackingType.repsAndLoad),
+        Exercise('Press militar', '3 x 10', '', 'shoulder_press', [],
+            90, TrackingType.repsAndLoad),
+        Exercise('Jalón al pecho', '3 x 12', '', 'row', [],
+            75, TrackingType.repsAndLoad),
+        Exercise('Curl bíceps', '3 x 12', '', 'bicep_curl', [],
+            60, TrackingType.repsAndLoad),
+        Exercise('Extensión tríceps polea', '3 x 12', '', 'bicep_curl', [],
+            60, TrackingType.repsAndLoad),
       ],
     ),
     Workout(
@@ -81,14 +106,20 @@ class Workouts {
       minutes: 50,
       needsGym: true,
       goal: Goal.gainMuscle,
+      level: Level.intermediate,
       exercises: [
-        Exercise('Sentadilla con barra', '4 x 8-10', '', 'squat'),
-        Exercise('Prensa', '4 x 12', '', 'squat'),
+        Exercise('Sentadilla con barra', '4 x 8-10', '', 'squat', [],
+            120, TrackingType.repsAndLoad),
+        Exercise('Prensa', '4 x 12', '', 'squat', [],
+            90, TrackingType.repsAndLoad),
         Exercise('Peso muerto rumano', '3 x 10', '', 'deadlift',
-            [HealthCondition.lesionEspalda]),
-        Exercise('Extensión de cuádriceps', '3 x 15', '', 'calf_raise'),
-        Exercise('Curl femoral', '3 x 15', '', 'calf_raise'),
-        Exercise('Elevación de gemelos', '4 x 20', '', 'calf_raise'),
+            [HealthCondition.lesionEspalda], 90, TrackingType.repsAndLoad),
+        Exercise('Extensión de cuádriceps', '3 x 15', '', 'calf_raise', [],
+            60, TrackingType.repsAndLoad),
+        Exercise('Curl femoral', '3 x 15', '', 'calf_raise', [],
+            60, TrackingType.repsAndLoad),
+        Exercise('Elevación de gemelos', '4 x 20', '', 'calf_raise', [],
+            45, TrackingType.repsAndLoad),
       ],
     ),
     Workout(
@@ -99,12 +130,18 @@ class Workouts {
       needsGym: true,
       goal: Goal.health,
       exercises: [
-        Exercise('Sentadilla', '3 x 10', '', 'squat'),
-        Exercise('Press banca', '3 x 10', '', 'bench_press'),
-        Exercise('Remo máquina', '3 x 12', '', 'row'),
-        Exercise('Press hombro mancuernas', '3 x 12', '', 'shoulder_press'),
-        Exercise('Plancha', '3 x 40 seg', '', 'plank'),
-        Exercise('Cardio (cinta/elíptica)', '10 min', '', 'run'),
+        Exercise('Sentadilla', '3 x 10', '', 'squat', [],
+            90, TrackingType.repsAndLoad),
+        Exercise('Press banca', '3 x 10', '', 'bench_press', [],
+            90, TrackingType.repsAndLoad),
+        Exercise('Remo máquina', '3 x 12', '', 'row', [],
+            75, TrackingType.repsAndLoad),
+        Exercise('Press hombro mancuernas', '3 x 12', '', 'shoulder_press',
+            [], 75, TrackingType.repsAndLoad),
+        Exercise('Plancha', '3 x 40 seg', '', 'plank', [],
+            45, TrackingType.duration),
+        Exercise('Cardio (cinta/elíptica)', '10 min', '', 'run', [],
+            0, TrackingType.duration),
       ],
     ),
     Workout(
@@ -115,11 +152,16 @@ class Workouts {
       needsGym: true,
       goal: Goal.loseFat,
       exercises: [
-        Exercise('Cinta o elíptica', '15 min', 'Ritmo moderado-alto', 'run'),
-        Exercise('Sentadilla goblet', '3 x 15', '', 'squat'),
-        Exercise('Remo máquina', '3 x 15', '', 'row'),
-        Exercise('Press hombro', '3 x 12', '', 'shoulder_press'),
-        Exercise('Abdominales en máquina', '3 x 20', '', 'crunch'),
+        Exercise('Cinta o elíptica', '15 min', 'Ritmo moderado-alto', 'run',
+            [], 60, TrackingType.duration),
+        Exercise('Sentadilla goblet', '3 x 15', '', 'squat', [],
+            60, TrackingType.repsAndLoad),
+        Exercise('Remo máquina', '3 x 15', '', 'row', [],
+            60, TrackingType.repsAndLoad),
+        Exercise('Press hombro', '3 x 12', '', 'shoulder_press', [],
+            60, TrackingType.repsAndLoad),
+        Exercise('Abdominales en máquina', '3 x 20', '', 'crunch', [],
+            45, TrackingType.repsAndLoad),
       ],
     ),
     Workout(
@@ -130,11 +172,16 @@ class Workouts {
       needsGym: false,
       goal: Goal.health,
       exercises: [
-        Exercise('Estiramiento de cuello y hombros', '2 min', '', 'stretch'),
-        Exercise('Gato-camello', '10 reps', '', 'cat_cow'),
-        Exercise('Estiramiento de isquiotibiales', '30 seg c/lado', '', 'stretch'),
-        Exercise('Rotación de cadera', '10 c/lado', '', 'cat_cow'),
-        Exercise('Respiración profunda', '2 min', '', 'breathing'),
+        Exercise('Estiramiento de cuello y hombros', '2 min', '', 'stretch',
+            [], 30, TrackingType.duration),
+        Exercise('Gato-camello', '10 reps', '', 'cat_cow', [],
+            30, TrackingType.reps),
+        Exercise('Estiramiento de isquiotibiales', '30 seg c/lado', '',
+            'stretch', [], 20, TrackingType.duration),
+        Exercise('Rotación de cadera', '10 c/lado', '', 'cat_cow', [],
+            30, TrackingType.reps),
+        Exercise('Respiración profunda', '2 min', '', 'breathing', [],
+            0, TrackingType.duration),
       ],
     ),
   ];
@@ -151,6 +198,48 @@ class Workouts {
       final bw = b.goal == p.goal ? 0 : 1;
       return aw.compareTo(bw);
     });
+    return pool;
+  }
+
+  /// Filtra por criterios separados: objetivo, nivel y equipamiento.
+  /// Cada criterio es independiente. Si no hay resultados, devuelve lista vacía
+  /// (no relaja filtros silenciosamente).
+  static List<Workout> filtered({
+    bool? needsGym,
+    Goal? goal,
+    Level? level,
+    Profile? profile,
+  }) {
+    var pool = all.toList();
+
+    // Equipamiento
+    if (needsGym != null) {
+      pool = pool.where((w) => w.needsGym == needsGym).toList();
+    } else if (profile != null) {
+      pool = pool.where((w) => profile.hasGym || !w.needsGym).toList();
+    }
+
+    // Objetivo
+    if (goal != null) {
+      pool = pool.where((w) => w.goal == goal).toList();
+    }
+
+    // Nivel: incluye rutinas sin nivel especificado y las del nivel solicitado
+    if (level != null) {
+      pool = pool.where((w) => w.level == null || w.level == level).toList();
+    }
+
+    // Filtro de salud: excluye ejercicios que el perfil debería evitar
+    // (la lista de rutinas no se altera; la UI ya los marca con advertencia)
+
+    // Ordenar: primero las que calzan con el objetivo del perfil
+    if (profile != null) {
+      pool.sort((a, b) {
+        final ag = a.goal == profile.goal ? 0 : 1;
+        final bg = b.goal == profile.goal ? 0 : 1;
+        return ag.compareTo(bg);
+      });
+    }
     return pool;
   }
 
