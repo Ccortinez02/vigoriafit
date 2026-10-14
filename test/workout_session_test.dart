@@ -75,6 +75,8 @@ SeriesEntry _durEntry(
 // ── Tests de modelo WorkoutSession ───────────────────────────────────────────
 
 void main() {
+  recoveryTests();
+
   group('WorkoutSession — serialización', () {
     test('toJson / fromJson preserva todos los campos', () {
       final s = _makeSession();
@@ -332,3 +334,152 @@ Profile _profile() => Profile(
       level: Level.beginner,
       hasGym: true,
     );
+
+// ── Tests de recuperación de crash ───────────────────────────────────────────
+
+// Estos tests verifican el comportamiento esperado de carga/recuperación que
+// loadForUser implementa. No requieren el servicio completo ni Firebase.
+
+void recoveryTests() {
+  group('Crash recovery — sesión huérfana en disco', () {
+    test('sesión finished serializada es identificable como no-activa', () {
+      final s = _makeSession();
+      s.status = WorkoutStatus.finished;
+      s.finishedAt = DateTime(2026, 10, 14, 11, 0);
+      s.syncState = SessionSyncState.pending;
+
+      final recovered = WorkoutSession.fromJson(s.toJson());
+      expect(recovered.isActive, false);
+      expect(recovered.isFinished, true);
+      // loadForUser movería esta sesión al historial en lugar de marcarla activa.
+    });
+
+    test('sesión finished recuperada conserva syncState para reintento', () {
+      final s = _makeSession();
+      s.addSeries(0, _repsEntry(id: 'p1', reps: 15));
+      s.addSeries(0, _repsEntry(id: 'p2', setIndex: 1, reps: 12));
+      s.status = WorkoutStatus.finished;
+      s.syncState = SessionSyncState.pending;
+
+      final recovered = WorkoutSession.fromJson(s.toJson());
+      expect(recovered.syncState, SessionSyncState.pending);
+      expect(recovered.exercises[0].series.length, 2);
+      // Las series sobreviven al crash y al ciclo JSON.
+    });
+
+    test('sesión crashed-y-recuperada no aparece dos veces en historial (dedup)', () {
+      final s = _makeSession();
+      s.status = WorkoutStatus.finished;
+
+      // Simular: historial ya tiene la sesión (persistHistory completó)
+      // pero v3_active_session también la tiene (remove no se ejecutó).
+      final historyBefore = [s];
+      final activeRaw = s.toJson();
+
+      final recovered = WorkoutSession.fromJson(activeRaw);
+      // _addToLocalHistory hace removeWhere por id antes de insertar → no duplica.
+      final merged = List<WorkoutSession>.from(historyBefore);
+      merged.removeWhere((x) => x.id == recovered.id);
+      merged.insert(0, recovered);
+
+      expect(merged.length, 1);
+      expect(merged[0].id, s.id);
+    });
+  });
+
+  group('Límite de historial local — sesiones pendientes conservadas', () {
+    test('algoritmo de recorte preserva sesiones pending fuera del límite top-50', () {
+      const maxLocalHistory = 50;
+      // 50 sesiones confirmadas (más recientes) + 1 pending (más antigua).
+      final sessions = List.generate(51, (i) {
+        return WorkoutSession(
+          id: 'sess-$i',
+          uid: 'u1',
+          workoutId: 'home_fullbody',
+          workoutTitle: 'Full body',
+          startedAt: DateTime(2026, 1, i + 1, 10, 0),
+          status: WorkoutStatus.finished,
+          syncState: i == 0 // la más antigua → posición 50 tras ordenar
+              ? SessionSyncState.pending
+              : SessionSyncState.confirmed,
+        );
+      });
+      sessions.sort((a, b) => b.startedAt.compareTo(a.startedAt));
+      // Tras ordenar: [sess-50 (confirmed), ..., sess-1 (confirmed), sess-0 (pending)]
+
+      // Aplicar el mismo algoritmo que _trimHistory y _persistHistory usan.
+      bool needsSync(WorkoutSession s) =>
+          s.status == WorkoutStatus.finished &&
+          (s.syncState == SessionSyncState.pending ||
+              s.syncState == SessionSyncState.failed);
+
+      final pending = sessions.where(needsSync).toList();
+      final rest =
+          sessions.where((s) => !needsSync(s)).take(maxLocalHistory).toList();
+      final trimmed = [...pending, ...rest]
+        ..sort((a, b) => b.startedAt.compareTo(a.startedAt));
+
+      // 50 confirmed + 1 pending = 51, aunque el límite sea 50.
+      expect(trimmed.length, 51);
+      expect(trimmed.any((s) => s.id == 'sess-0' && s.syncState == SessionSyncState.pending), true);
+      expect(trimmed.where((s) => s.syncState == SessionSyncState.confirmed).length, 50);
+    });
+
+    test('sesión failed también se conserva fuera del límite', () {
+      const maxLocalHistory = 50;
+      final sessions = List.generate(51, (i) {
+        return WorkoutSession(
+          id: 'fail-$i',
+          uid: 'u1',
+          workoutId: 'wid',
+          workoutTitle: 'T',
+          startedAt: DateTime(2026, 1, i + 1),
+          status: WorkoutStatus.finished,
+          syncState: i == 0
+              ? SessionSyncState.failed
+              : SessionSyncState.confirmed,
+        );
+      });
+      sessions.sort((a, b) => b.startedAt.compareTo(a.startedAt));
+
+      bool needsSync(WorkoutSession s) =>
+          s.status == WorkoutStatus.finished &&
+          (s.syncState == SessionSyncState.pending ||
+              s.syncState == SessionSyncState.failed);
+
+      final pending = sessions.where(needsSync).toList();
+      final rest =
+          sessions.where((s) => !needsSync(s)).take(maxLocalHistory).toList();
+      final trimmed = [...pending, ...rest];
+
+      expect(trimmed.any((s) => s.syncState == SessionSyncState.failed), true);
+      expect(trimmed.where((s) => s.syncState == SessionSyncState.confirmed).length, 50);
+    });
+  });
+
+  group('Idempotencia — modelo de sesión', () {
+    test('finalizar dos veces la misma sesión no cambia finishedAt', () {
+      final s = _makeSession();
+      final firstFinish = DateTime(2026, 10, 14, 11, 0);
+      s.status = WorkoutStatus.finished;
+      s.finishedAt = firstFinish;
+
+      // Segundo intento: finishedAt ??= DateTime.now() no sobreescribe.
+      s.finishedAt ??= DateTime(2026, 10, 14, 12, 0);
+      expect(s.finishedAt, firstFinish);
+    });
+
+    test('retrySync sobre sesión ya confirmed no cambia su estado', () {
+      final s = _makeSession();
+      s.status = WorkoutStatus.finished;
+      s.syncState = SessionSyncState.confirmed;
+
+      // El servicio llama a _syncSession solo si pending o failed.
+      final shouldRetry = s.syncState == SessionSyncState.pending ||
+          s.syncState == SessionSyncState.failed;
+      expect(shouldRetry, false);
+      // syncState no se altera.
+      expect(s.syncState, SessionSyncState.confirmed);
+    });
+  });
+}

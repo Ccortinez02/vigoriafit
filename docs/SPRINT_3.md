@@ -16,14 +16,14 @@ Rama: `ccortinez/sprint3-entrenamientos-historial`.
 | #166 | Finalización idempotente; cancelación con confirmación |
 | #167 | Recuperación de sesión interrumpida desde SharedPreferences |
 | #169 | Temporizador de descanso con referencia temporal persistida |
-| #196, #197 | Historial con filtro por período, detalle, estado de sync |
+| #196 | Historial de sesiones con filtro por período (#196) y detalle de series (#197) |
 | #250 | Caso de prueba: registrar y finalizar con varias series |
 | #251 | Caso de prueba: recuperar sesión interrumpida |
 
 **Decisiones:**
 - La sincronización remota ocurre al finalizar (no por serie): evita ráfagas de escritura.
 - Una sesión activa por cuenta; conflicto se resuelve ofreciendo retomarla o cancelarla.
-- El historial local almacena las últimas 50 sesiones. El historial remoto se carga bajo demanda.
+- El historial local almacena las últimas 50 sesiones **confirmadas o canceladas**. Las sesiones con sync pendiente o fallido siempre se conservan independientemente del límite.
 - Las marcas `DayLog.workouts` se mantienen para retrocompatibilidad con Sprint 2.
 - No se migran registros antiguos a sesiones con series inventadas.
 
@@ -84,8 +84,6 @@ Instantánea del ejercicio en el momento de inicio. El historial sigue siendo le
 - **WorkoutStatus** = estado de ejecución del entrenamiento (activo, finalizado, cancelado).
 - **SessionSyncState** = estado de persistencia remota (local, pendiente, confirmado, fallido).
 
-Una sesión finalizada puede estar pendiente de sincronización: ambos conceptos son independientes.
-
 ---
 
 ## 3. Transiciones válidas
@@ -105,8 +103,6 @@ SessionSyncState:
   failed  ──► confirmed (retrySync OK)
 ```
 
-Una respuesta tardía del servidor no puede reactivar una sesión ya finalizada: la regla Firestore solo permite `update` cuando el documento remoto ya tiene `status == finished`.
-
 ---
 
 ## 4. Persistencia local y sincronización
@@ -116,7 +112,7 @@ Una respuesta tardía del servidor no puede reactivar una sesión ya finalizada:
 | Clave | Contenido |
 |-------|-----------|
 | `v3_active_session` | JSON de la sesión activa |
-| `v3_session_history` | Lista de JSON (últimas 50 sesiones) |
+| `v3_session_history` | Lista de JSON (historial) |
 | `v3_rest_started_at` | Epoch ms del inicio del descanso |
 | `v3_rest_duration` | Duración del descanso en seg |
 
@@ -126,98 +122,109 @@ Una respuesta tardía del servidor no puede reactivar una sesión ya finalizada:
 users/{uid}/workout_sessions/{sessionId}
 ```
 
-El `sessionId` es el mismo UUID generado al iniciar. La sincronización usa `runTransaction` para evitar sobrescribir un documento ya confirmado.
+El `sessionId` es el mismo UUID generado al iniciar. La sincronización usa `runTransaction` con `tx.set`: si el documento ya existe (intento anterior exitoso), la transacción es un no-op. Las sesiones son inmutables en Firestore una vez escritas.
 
 ### Garantía de supervivencia
 
-El progreso se persiste en disco después de cada operación aceptada (`addSeries`, `updateSeries`). El proceso puede terminarse abruptamente y la sesión se recupera al reabrir la app desde `v3_active_session`.
+El progreso se persiste en disco después de cada operación (`addSeries`, `updateSeries`). El estado `finished` se escribe en `v3_active_session` **antes** de añadir al historial. Si el proceso termina en ese intervalo, `loadForUser` detecta que la sesión activa tiene `status != active` y la mueve al historial automáticamente al reabrir.
 
 ---
 
-## 5. Idempotencia y concurrencia
+## 5. Recuperación de crash — flujo completo
+
+`finishSession` escribe en este orden:
+1. `_persistActive(prefs)` — escribe sesión con `status=finished` en `v3_active_session`
+2. `_addToLocalHistory` + `_persistHistory(prefs)` — añade al historial y persiste
+3. `_syncSession` — intenta Firestore
+4. `prefs.remove(_kActiveSession)` — borra la sesión activa
+
+**Crash entre 1 y 2:** `v3_active_session` tiene `status=finished` pero `v3_session_history` no tiene la sesión.
+- Al reabrir: `loadForUser` carga el historial primero, luego detecta que `_active.status != active`, la añade al historial (dedup por id) y borra `v3_active_session`.
+- Resultado: sesión aparece en historial con `syncState=pending`; el usuario puede reintentar sync.
+
+**Crash entre 2 y 4:** `v3_active_session` y `v3_session_history` tienen ambos la sesión.
+- Al reabrir: `_addToLocalHistory` hace `removeWhere(id)` antes de insertar → dedup.
+- Resultado: una sola entrada en historial, `_active=null`.
+
+**Crash entre 3 y 4:** idem a crash entre 2 y 4.
+
+---
+
+## 6. Límite de historial local
+
+El límite de 50 entradas aplica **solo** a sesiones con `syncState ∈ {local, confirmed}` o canceladas. Las sesiones con `syncState ∈ {pending, failed}` siempre se conservan, independientemente de cuántas sesiones confirmadas existan.
+
+Algoritmo en `_persistHistory` y `_trimHistory`:
+```dart
+final needsSync = _history.where(_needsSync).toList();     // siempre conservadas
+final rest = _history.where(not _needsSync).take(50);      // limitadas a 50
+final toSave = [...needsSync, ...rest]..sort(...);
+```
+
+---
+
+## 7. Idempotencia y concurrencia
 
 - **Inicio de sesión**: si ya hay una sesión activa de la misma rutina, la devuelve sin crear otra.
-- **addSeries**: ignora entradas con id duplicado (mismo id → no duplica).
-- **finishSession**: si ya está finalizada, solo reintenta sync si está pending/failed.
-- **Firestore update**: la regla requiere `status == finished` en el remoto → un reintento no altera un documento ya confirmado.
-- **_operationInProgress**: guard interno evita concurrencia de `addSeries` / `finishSession`.
+- **addSeries**: ignora entradas con id duplicado (mismo id → no inserta).
+- **finishSession**: si `_active.status == finished` (e.g. llamada doble dentro de la misma ejecución), completa las operaciones pendientes de historial/limpieza antes de reintentar sync.
+- **Firestore**: sesiones inmutables una vez creadas; `allow update: if false`. El reintento hace `tx.set` solo si el doc no existe; si existe, la transacción termina sin escribir.
+- **`_operationInProgress`**: guard impide concurrencia de `addSeries`/`finishSession`/`cancelSession`.
+- **`finishedAt ??=`**: el operador null-aware garantiza que el timestamp original no se sobreescribe en reintentos.
 
 ---
 
-## 6. Recuperación de sesiones
+## 8. Temporizador de descanso
 
-Al cargar el usuario (`_restoreAccount` en AppStore), `WorkoutSessionService.loadForUser` lee:
-1. La sesión activa de `v3_active_session`.
-2. El historial local de `v3_session_history`.
-3. El estado del descanso (`v3_rest_started_at` + `v3_rest_duration`): si quedaba tiempo, reanuda el timer.
+El temporizador tiene dos componentes con responsabilidades distintas:
 
-El flujo de recuperación:
-- Si hay sesión activa al abrir la app → `WorkoutTab` muestra el banner "Sesión en curso".
-- El usuario pulsa "Retomar" → navega a `WorkoutSessionPage` con los datos ya cargados.
-- Si inicia una rutina distinta → se le ofrece retomarla o cancelar la anterior.
+- **`_restStartedAt` (epoch ms en disco)**: referencia temporal que permite calcular el tiempo transcurrido en cualquier momento, incluso después de reabrir la app. Esta referencia **sí sobrevive al cierre del proceso**.
+- **`Timer.periodic` (`_restTicker`)**: dispara `notifyListeners()` cada segundo para actualizar la UI. **No sobrevive al cierre del proceso**: al reabrir, el ticker ya no corre.
 
-Escenarios cubiertos:
-- Paso a segundo plano y regreso.
-- Cierre normal del proceso.
-- Terminación abrupta (SIGKILL).
-- Cambio de cuenta: `clearForUser()` limpia el estado en memoria; la sesión del usuario anterior permanece en su propia clave de SharedPreferences.
-- Logout con sesión activa: la sesión queda en disco, disponible al volver a iniciar sesión con el mismo UID.
+Al recuperar:
+```
+remaining = restDuration - (DateTime.now() - _restStartedAt).inSeconds
+```
+Si `remaining > 0`: se crea un nuevo ticker con ese tiempo restante.
+Si `remaining <= 0`: se muestra el estado "terminado" sin ticker.
+
+**Limitación conocida**: entre el cierre y la reapertura de la app, la cuenta regresiva no avanza visualmente. Al reabrir, el tiempo mostrado es correcto, pero el usuario no recibe notificación al llegar a cero mientras la app está cerrada.
 
 ---
 
-## 7. Temporizador de descanso
-
-- El descanso se inicia automáticamente al registrar una serie (si `exercise.restSeconds > 0`).
-- Se persiste `_restStartedAt` (epoch ms) en disco para sobrevivir al cierre del proceso.
-- Al recuperar: `remaining = restDuration - (now - startedAt)`. Si remaining > 0 → reanuda; si no → muestra "terminado".
-- No se usa un `Timer` como única fuente de tiempo: la referencia temporal es `DateTime.now()`.
-- El banner de descanso se muestra en la parte superior de `WorkoutSessionPage`.
-
-**Limitación:** El timer no sobrevive al cierre del proceso en iOS si la app no está en background activo. La referencia temporal garantiza que al reabrir se muestre el tiempo correcto (o el estado "terminado").
-
----
-
-## 8. Catálogo de ejercicios
+## 9. Catálogo de ejercicios
 
 Se añadió `TrackingType` a cada `Exercise` del catálogo:
 
-| Tipo | Ejercicios |
-|------|-----------|
-| `reps` | Sentadillas, flexiones, crunch, zancadas, puente de glúteo, gato-camello, rotación de cadera |
-| `repsAndLoad` | Press banca, remo, press militar, jalón, curl bíceps, sentadilla con barra, prensa, peso muerto, goblet, etc. |
-| `duration` | Plancha, mountain climbers, jumping jacks, burpees, cardio, estiramientos |
+| Tipo | Ejemplos |
+|------|---------|
+| `reps` | Sentadillas, flexiones, crunch, zancadas, puente de glúteo |
+| `repsAndLoad` | Press banca, remo, press militar, jalón, curl bíceps, sentadilla con barra |
+| `duration` | Plancha, mountain climbers, jumping jacks, burpees, estiramientos |
 
 Se añadió `Level?` a cada `Workout`:
-- Sin `level`: apto para cualquier nivel.
-- `Level.intermediate`: HIIT, tren superior, tren inferior.
+- `null`: apto para cualquier nivel.
+- `Level.intermediate`: HIIT, tren superior/inferior.
 
 ---
 
-## 9. Filtros (separados por criterio, #162)
+## 10. Filtros (#162)
 
-`Workouts.filtered({needsGym, goal, level, profile})`:
-- **Equipamiento**: `needsGym` filtra estrictamente. No se relaja silenciosamente.
-- **Objetivo**: filtra por `Workout.goal`. Distinto del equipamiento.
-- **Nivel**: incluye rutinas sin nivel (null) + las del nivel solicitado.
-- Si no hay resultados: muestra estado vacío con opción de limpiar filtros.
-- No hay fallback que reintroduzca rutinas incompatibles.
+`Workouts.filtered({needsGym, goal, level, profile})`: cada dimensión se aplica de forma independiente. Retorna lista vacía si no hay coincidencia — sin fallback silencioso.
 
 ---
 
-## 10. Historial (#196, #197)
+## 11. Historial (#196, #197)
 
-- Lista: sesiones finalizadas (no canceladas) ordenadas por fecha descendente.
-- Filtro por período: Esta semana, Este mes, Personalizado (rango de fechas locales).
-- Zona horaria: se usa `DateTime.now()` local para calcular límites de período.
-- Una sesión cerca de medianoche aparece en el día local de inicio.
-- Detalle: ejercicios y series realmente registradas. No se inventan datos.
-- Estado de sincronización visible por sesión.
-- Historial remoto: paginación a 30 sesiones por carga. Deduplicación por `id`.
-- Error de red: mantiene el historial local; muestra opción de reintentar.
+- **#196**: historial de sesiones finalizadas (no canceladas), ordenado por fecha descendente.
+- **#197**: filtro por período (Esta semana, Este mes, Personalizado). Zona horaria local.
+- Detalle: series realmente registradas durante la sesión (snapshot).
+- Estado de sincronización visible por sesión, con opción de reintento para `failed`.
+- Deduplicación por `id` al combinar historial local y remoto.
 
 ---
 
-## 11. Seguridad (reglas Firestore)
+## 12. Seguridad — reglas Firestore
 
 ```
 match /workout_sessions/{sessionId} {
@@ -225,121 +232,138 @@ match /workout_sessions/{sessionId} {
   allow delete: if false;
   allow create: if owner(uid) && validSession(request.resource.data)
     && request.resource.data.status == 1; // solo finished
-  allow update: if owner(uid) && validSession(request.resource.data)
-    && resource.data.status == 1 && request.resource.data.status == 1
-    && request.resource.data.startedAt == resource.data.startedAt;
+  allow update: if false; // inmutables una vez creadas
 }
 ```
 
-**Garantías:**
-- Solo el propietario (owner) puede crear/leer sus sesiones.
-- El `startedAt` no puede cambiar en updates (impide transferir identidad).
-- Solo se pueden crear sesiones ya finalizadas (no sesiones activas en remoto).
-- El rol de entrenador no da acceso al historial privado de sesiones.
-- Límites: ≤30 ejercicios, ≤500 series por sesión.
+**Garantías verificables:**
+- Solo el propietario puede crear/leer sus sesiones.
+- Solo se crean sesiones finalizadas (`status == 1`).
+- Una vez creado, el documento no puede modificarse.
+- La función `validSession` valida tipos y límites de los campos de primer nivel; los datos anidados (ejercicios, series) no son validados por las reglas — dependen de la validación en cliente. Esta es una limitación conocida de la complejidad de CEL.
+
+**Validación de las reglas:** pendiente de ejecución con Firebase Emulator Suite (ver sección 14).
 
 ---
 
-## 12. Pruebas y resultados
+## 13. Pruebas ejecutadas
 
-### Pruebas unitarias — `test/workout_session_test.dart`
+### Pruebas unitarias Flutter — resultados confirmados
 
-**25 tests · 25 pasan**
+**32 tests nuevos (Sprint 3) + 66 tests anteriores (Sprint 1–2) = 98 total · 98 pasan**
 
-| Grupo | Tests |
-|-------|-------|
-| Serialización (toJson/fromJson) | 2 |
-| addSeries (idempotencia) | 3 |
-| updateSeries (corrección) | 2 |
-| Estados y transiciones | 2 |
-| SeriesEntry (serialización) | 2 |
-| Workouts.filtered — objetivo | 2 |
-| Workouts.filtered — nivel | 2 |
-| Workouts.filtered — equipamiento | 3 |
-| Workouts.filtered — combinaciones | 2 |
-| Historial sin duplicados | 2 |
-| Aislamiento de cuentas | 1 |
-| Validación de tipos de serie | 2 |
+Ejecutado con: `flutter test` en rama `ccortinez/sprint3-entrenamientos-historial`, sin emulador.
 
-### Suite completa (Sprint 1–3)
+| Grupo | Tests | Estado |
+|-------|-------|--------|
+| Crash recovery — sesión huérfana en disco | 3 | ✅ |
+| Límite historial — sesiones pending conservadas | 2 | ✅ |
+| Idempotencia — modelo de sesión | 2 | ✅ |
+| WorkoutSession — serialización | 2 | ✅ |
+| addSeries — idempotencia | 3 | ✅ |
+| updateSeries | 2 | ✅ |
+| Estados y transiciones | 2 | ✅ |
+| SeriesEntry — serialización | 2 | ✅ |
+| Workouts.filtered — objetivo | 2 | ✅ |
+| Workouts.filtered — nivel | 2 | ✅ |
+| Workouts.filtered — equipamiento | 3 | ✅ |
+| Workouts.filtered — combinaciones | 2 | ✅ |
+| Historial sin duplicados | 2 | ✅ |
+| Aislamiento de cuentas | 1 | ✅ |
+| Validación de tipos de serie | 2 | ✅ |
 
-**91 tests · 91 pasan** (Flutter test, sin emulador)
+**Análisis estático:** `flutter analyze` — 0 errores, 0 warnings. Las 18 `info` son heredadas de sprints anteriores (deprecaciones de SDK, estilos de código).
 
-### Análisis estático
+### Pruebas de reglas Firestore — pendientes
 
-`flutter analyze`: 0 errores, 0 warnings. Solo infos de código heredado de sprints anteriores.
+Las siguientes pruebas requieren ejecutar **Firebase Emulator Suite** (`firebase emulators:start --only firestore`) y el runner de reglas (`firebase emulate:exec` o `jest` con `@firebase/rules-unit-testing`). No han sido ejecutadas en esta sesión.
 
----
+Escenarios a cubrir:
+- [ ] Propietario crea sesión válida con `status=1` → permitido
+- [ ] Propietario intenta crear sesión con `status=0` (active) → denegado
+- [ ] Propietario intenta actualizar sesión existente → denegado
+- [ ] Propietario intenta borrar sesión → denegado
+- [ ] Cuenta distinta intenta leer sesión ajena → denegado
+- [ ] Usuario anónimo → denegado
+- [ ] Token de entrenador sin ser propietario → denegado
+- [ ] Escritura con campo `exercises` con más de 30 elementos → denegado
+- [ ] Escritura con `totalSeries` > 500 → denegado
+- [ ] Escritura omitiendo campo requerido (`workoutId`) → denegado
 
-## 13. Recorrido real de aceptación
+### Recorrido real de aceptación — pendiente
 
-**Nota:** El recorrido real (pasos 1–14 del enunciado) requiere iniciar los emuladores Firebase y ejecutar la app en el simulador iOS. Las siguientes instrucciones permiten reproducirlo:
+El recorrido en iOS Simulator con Firebase Emulator no ha sido ejecutado en esta sesión. Requiere:
 
 ```bash
-# Iniciar emuladores
+# Terminal 1
 firebase emulators:start --only auth,firestore
 
-# Ejecutar app en simulador (con emulador activado)
+# Terminal 2
 flutter run --dart-define=USE_EMULATOR=true
 ```
 
-**Flujo verificado manualmente durante el desarrollo:**
-1. Login con cuenta de prueba.
-2. Seleccionar "Full body en casa".
-3. Pulsar "Iniciar entrenamiento" → se crea sesión con UUID.
-4. Registrar series con valores distinguibles (ej. 15 reps, 12 reps, 30s plancha).
-5. Las series aparecen persistidas en la tab del ejercicio.
-6. Terminar proceso abruptamente (Control+C en flutter run).
-7. Reabrir la app → banner "Sesión en curso" aparece en la tab Entrenamientos.
-8. Pulsar "Retomar" → se restauran todas las series registradas.
-9. Registrar otra serie.
-10. Pulsar "Finalizar" → confirmación → sesión pasa a estado `finished`.
-11. En "Historial" → aparece exactamente 1 sesión (misma rutina, mismo día).
-12. Detalle → muestra los valores registrados.
-13. Reiniciar app → historial persiste.
-14. El documento `users/{uid}/workout_sessions/{sessionId}` existe en el emulador Firestore.
-
-**Recorrido sin conexión:**
-- Deshabilitar red con el `DebugNetworkController` del Sprint 2.
-- Finalizar → banner "Pendiente de sincronización".
-- Reconectar → `retrySync` → estado cambia a "Sincronizado".
-- El historial muestra una única sesión.
+Pasos a verificar manualmente:
+1. Login con cuenta de prueba (solo emulador).
+2. Iniciar una rutina; anotar el UUID de sesión en el log de Flutter.
+3. Registrar series con valores distinguibles (ej. 15 reps, 60 kg; 30 s plancha).
+4. Verificar que las series aparecen en la tab del ejercicio.
+5. Terminar el proceso mediante el cierre del simulador (no Control+C del runner — el cierre del simulador simula más fielmente una terminación abrupta que interrumpir el runner de Flutter).
+6. Reabrir la app (re-lanzar desde Xcode o `flutter run`).
+7. Verificar: el banner "Sesión en curso" aparece con el mismo UUID.
+8. Navegar a la sesión; verificar que las series registradas están presentes.
+9. Añadir otra serie; finalizar con confirmación.
+10. En Historial: exactamente 1 entrada con ese UUID.
+11. En Firestore Emulator UI (localhost:4000): exactamente 1 documento `users/{uid}/workout_sessions/{sessionId}`.
+12. Repetir desde paso 2 con red deshabilitada (DebugNetworkController): verificar estado `pending` en historial, reconectar, verificar `confirmed` y documento único en Firestore.
 
 ---
 
-## 14. Limitaciones conocidas
+## 14. Estado de Azure #250 y #251
+
+**#250 — Completar sesión con varias series:**
+- Cubierto por los tests de modelo: `addSeries` con ids distintos acumula series, `totalDoneSeries` las contabiliza correctamente.
+- El flujo completo (registrar → finalizar → verificar en historial y Firestore) requiere el recorrido real (sección 13, pendiente).
+
+**#251 — Recuperar sesión interrumpida:**
+- La serialización `toJson/fromJson` preserva todas las series y el syncState (verificado en tests).
+- El mecanismo de recuperación real en `loadForUser` detecta sesiones huérfanas (status != active en disco) y las mueve al historial. El algoritmo de dedup por id evita duplicados si la sesión ya estaba parcialmente en historial.
+- **La verificación de que la sesión se recupera con el mismo UUID y todas las series tras un cierre real del proceso requiere el recorrido en simulador (sección 13, pendiente).** Los tests de modelo verifican el algoritmo pero no el flujo completo de iOS/SharedPreferences.
+
+---
+
+## 15. Limitaciones conocidas
 
 | Limitación | Alcance |
 |-----------|---------|
-| Sesión activa no se sincroniza en tiempo real entre dispositivos | Sprint 3 solo garantiza persistencia local |
-| Timer de descanso no sobrevive al background extendido en iOS | Referencia temporal recupera el tiempo correcto al reabrir |
-| Historial local limitado a 50 sesiones | Sesiones más antiguas solo disponibles en Firestore |
-| El historial no admite eliminación de sesiones | No implementado en este sprint |
-| Cancelación no se sincroniza a Firestore | Solo se guarda localmente |
+| Sesión activa no se sincroniza entre dispositivos | Sprint 3 garantiza solo persistencia local |
+| El ticker del temporizador no corre mientras la app está cerrada | La referencia temporal permite mostrar el tiempo correcto al reabrir, pero sin notificación al llegar a cero |
+| Validación de datos anidados (ejercicios, series) no cubierta por reglas Firestore | Depende de validación en cliente |
+| Cancelación no se sincroniza a Firestore | Solo historial local |
+| Cambio de cuenta mientras una sync está en vuelo puede causar race condition | La sesión en vuelo se completa con los datos correctos pero el historial de la cuenta nueva puede no reflejarlo hasta recargar |
 
 ---
 
-## 15. Compatibilidad con datos anteriores
+## 16. Compatibilidad con datos anteriores
 
 - Los `DayLog.workouts` (marcas simples de Sprint 1–2) no se eliminan ni convierten.
-- `ExerciseWeightEntry` (historial de pesos por ejercicio) coexiste con las sesiones.
-- El catálogo de ejercicios añadió campos opcionales con valores por defecto; no hay cambios de ruptura en los modelos existentes.
+- `ExerciseWeightEntry` coexiste con las sesiones.
+- El catálogo añadió campos con valores por defecto; no hay cambios de ruptura.
 
 ---
 
-## 16. Relación con tareas Azure
+## 17. Relación con tareas Azure
 
-| Azure | Estado | Validación |
+| Azure | Estado | Evidencia |
 |-------|--------|-----------|
-| #159 | ✅ Implementado | Todos los ejercicios tienen trackingType y restSeconds |
-| #161 | ✅ Implementado | Instrucciones en Exercise.note; pose en assets |
-| #162 | ✅ Implementado | 9 tests de filtros separados pasan |
-| #164 | ✅ Implementado | Serialización verificada en test |
-| #165 | ✅ Implementado | 3 tipos de series, idempotencia verificada |
-| #166 | ✅ Implementado | finishSession idempotente, cancelación con confirmación |
-| #167 | ✅ Implementado | loadForUser recupera sesión activa desde disco |
-| #169 | ✅ Implementado | Timer usa referencia temporal persistida |
-| #196 | ✅ Implementado | Lista con filtros y estado vacío |
-| #197 | ✅ Implementado | Detalle con series reales |
-| #250 | ✅ Cubierto por test | workout_session_test.dart — addSeries + finish |
-| #251 | ✅ Cubierto por test | workout_session_test.dart — fromJson preserva series |
+| #159 | ✅ Implementado | Todos los ejercicios del catálogo tienen `trackingType` y `restSeconds` explícitos |
+| #161 | ✅ Implementado | `Exercise.note` contiene instrucciones; `pose` apunta a assets |
+| #162 | ✅ Implementado | 9 tests de filtros separados pasan; `Workouts.filtered()` no relaja restricciones |
+| #164 | ✅ Implementado | Serialización `toJson/fromJson` verificada en tests; ID estable UUID v4 |
+| #165 | ✅ Implementado | 3 tipos de serie; idempotencia de `addSeries` verificada en tests |
+| #166 | ✅ Implementado | `finishSession` idempotente con `_operationInProgress` y `finishedAt ??=`; cancelación con confirmación UI |
+| #167 | ✅ Implementado | `loadForUser` recupera sesiones huérfanas (finished en activa) y las mueve al historial |
+| #169 | ✅ Implementado | `_restStartedAt` persiste en disco; recovery calcula `remaining` desde referencia temporal |
+| #196 | ✅ Implementado | Historial de sesiones finalizadas con deduplicación por id |
+| #197 | ✅ Implementado | Filtro por período (Esta semana, Este mes, Personalizado) con fechas locales |
+| #250 | 🔶 Parcial | Algoritmo verificado en tests de modelo; recorrido real en simulador pendiente |
+| #251 | 🔶 Parcial | Serialización y dedup verificados; recorrido en simulador con cierre real del proceso pendiente |

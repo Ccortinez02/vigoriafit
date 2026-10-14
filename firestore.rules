@@ -52,14 +52,13 @@ service cloud.firestore {
       match /workout_sessions/{sessionId} {
         allow get, list: if owner(uid);
         allow delete: if false;
-        // Crear: solo el propietario, con datos válidos. El sessionId no puede cambiar.
+        // Crear: solo el propietario, con datos válidos, solo sesiones finalizadas.
+        // El sessionId (UUID) se genera en cliente y no puede reutilizarse.
         allow create: if owner(uid) && validSession(request.resource.data)
           && request.resource.data.status == 1; // 1 = finished
-        // Actualizar: solo mientras el status remoto sea finished y no cambie a otro
-        // (idempotencia: reintento no altera una sesión ya confirmada).
-        allow update: if owner(uid) && validSession(request.resource.data)
-          && resource.data.status == 1 && request.resource.data.status == 1
-          && request.resource.data.startedAt == resource.data.startedAt;
+        // Inmutable una vez creado: los reintentos usan create con el mismo
+        // documento (el cliente verifica existencia antes de tx.set).
+        allow update: if false;
       }
     }
     function groupOwner(gid) {

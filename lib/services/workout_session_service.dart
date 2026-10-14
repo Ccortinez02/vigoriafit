@@ -62,15 +62,12 @@ class WorkoutSessionService extends ChangeNotifier {
 
   /// Carga la sesión activa y el historial para el usuario actual.
   /// Se llama desde AppStore al establecer sesión.
+  ///
+  /// Si la sesión activa en disco ya está finalizada (crash entre escritura del
+  /// estado finished y limpieza de v3_active_session), la mueve al historial
+  /// para completar la operación interrumpida.
   Future<void> loadForUser(AccountPreferences prefs) async {
-    final raw = prefs.getString(_kActiveSession);
-    if (raw != null) {
-      try {
-        _active = WorkoutSession.fromJson(raw);
-      } catch (_) {
-        _active = null;
-      }
-    }
+    // Cargar historial primero para poder deduplicar la sesión huérfana.
     final list = prefs.getStringList(_kHistory) ?? [];
     _history = [];
     for (final s in list) {
@@ -79,6 +76,25 @@ class WorkoutSessionService extends ChangeNotifier {
       } catch (_) {}
     }
     _history.sort((a, b) => b.startedAt.compareTo(a.startedAt));
+
+    final raw = prefs.getString(_kActiveSession);
+    if (raw != null) {
+      try {
+        final session = WorkoutSession.fromJson(raw);
+        if (session.isActive) {
+          _active = session;
+        } else {
+          // Recuperación de crash: la sesión fue finalizada/cancelada pero el
+          // proceso terminó antes de limpiar v3_active_session. Completar ahora.
+          _active = null;
+          _addToLocalHistory(session);
+          await _persistHistory(prefs);
+          await prefs.remove(_kActiveSession);
+        }
+      } catch (_) {
+        _active = null;
+      }
+    }
 
     // Recuperar descanso si estaba activo
     final rsa = prefs.getInt(_kRestStartedAt);
@@ -196,6 +212,10 @@ class WorkoutSessionService extends ChangeNotifier {
   /// Finaliza la sesión activa. Idempotente: llamar dos veces no crea dos
   /// registros ni cambia la fecha de finalización. Si no hay conexión, la
   /// sesión queda en [SessionSyncState.pending] para reintento posterior.
+  ///
+  /// Si la sesión ya tiene status finished (e.g. recuperada de un crash
+  /// anterior), completa las operaciones pendientes (historial + limpieza)
+  /// y reintenta sync si el estado lo requiere.
   Future<void> finishSession(
     AccountPreferences prefs,
     FirebaseFirestore db,
@@ -203,17 +223,24 @@ class WorkoutSessionService extends ChangeNotifier {
     if (_operationInProgress) return;
     final session = _active;
     if (session == null) return;
-    // Idempotencia: si ya está finalizada, solo reintentar sync si está pending.
-    if (session.status == WorkoutStatus.finished) {
-      if (session.syncState == SessionSyncState.pending ||
-          session.syncState == SessionSyncState.failed) {
-        await _syncSession(session, prefs, db);
-      }
-      return;
-    }
 
     _operationInProgress = true;
     try {
+      if (session.status == WorkoutStatus.finished) {
+        // Crash recovery: la sesión ya estaba finalizada pero no fue migrada
+        // correctamente al historial. Completar las operaciones pendientes.
+        _addToLocalHistory(session);
+        await _persistHistory(prefs);
+        if (session.syncState == SessionSyncState.pending ||
+            session.syncState == SessionSyncState.failed) {
+          await _syncSession(session, prefs, db);
+        }
+        _active = null;
+        await prefs.remove(_kActiveSession);
+        notifyListeners();
+        return;
+      }
+
       session.status = WorkoutStatus.finished;
       session.finishedAt ??= DateTime.now();
       _syncState = SessionSyncState.pending;
@@ -376,17 +403,37 @@ class WorkoutSessionService extends ChangeNotifier {
   }
 
   Future<void> _persistHistory(AccountPreferences prefs) async {
-    final list = _history.take(_maxLocalHistory).map((s) => s.toJson()).toList();
-    await prefs.setStringList(_kHistory, list);
+    // Las sesiones con sync pendiente o fallido siempre se persisten íntegras,
+    // independientemente del límite de caché. El límite aplica solo a sesiones
+    // ya confirmadas o canceladas localmente.
+    final needsSync = _history.where(_needsSync).toList();
+    final rest = _history.where((s) => !_needsSync(s)).take(_maxLocalHistory).toList();
+    final toSave = [...needsSync, ...rest]
+      ..sort((a, b) => b.startedAt.compareTo(a.startedAt));
+    await prefs.setStringList(_kHistory, toSave.map((s) => s.toJson()).toList());
   }
 
   void _addToLocalHistory(WorkoutSession session) {
     _history.removeWhere((s) => s.id == session.id);
     _history.insert(0, session);
-    if (_history.length > _maxLocalHistory) {
-      _history = _history.sublist(0, _maxLocalHistory);
+    _trimHistory();
+  }
+
+  /// Aplica el límite al historial en memoria: nunca elimina sesiones pendientes
+  /// o fallidas; solo recorta las ya confirmadas o canceladas.
+  void _trimHistory() {
+    final pending = _history.where(_needsSync).toList();
+    final rest = _history.where((s) => !_needsSync(s)).toList();
+    if (rest.length > _maxLocalHistory) {
+      _history = [...pending, ...rest.sublist(0, _maxLocalHistory)];
+      _history.sort((a, b) => b.startedAt.compareTo(a.startedAt));
     }
   }
+
+  static bool _needsSync(WorkoutSession s) =>
+      s.status == WorkoutStatus.finished &&
+      (s.syncState == SessionSyncState.pending ||
+          s.syncState == SessionSyncState.failed);
 
   // ── Sincronización remota ────────────────────────────────────────────────
 
@@ -406,12 +453,9 @@ class WorkoutSessionService extends ChangeNotifier {
         final snap = await tx.get(ref);
         if (!snap.exists) {
           tx.set(ref, data);
-        } else {
-          // Solo actualiza si el documento remoto también está finalizado o no existe aún.
-          final remoteStatus = snap.data()?['status'] as int?;
-          if (remoteStatus == WorkoutStatus.finished.index) return;
-          tx.update(ref, data);
         }
+        // Si el documento ya existe, fue creado correctamente en un intento
+        // anterior. No se actualiza: las sesiones son inmutables en remoto.
       }).timeout(const Duration(seconds: 20));
 
       final i = _history.indexWhere((s) => s.id == session.id);
