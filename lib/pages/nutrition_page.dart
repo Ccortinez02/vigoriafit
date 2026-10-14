@@ -405,6 +405,7 @@ class _NutritionTabState extends State<NutritionTab> {
       seed: _menuSeed,
       profile: AppStore.instance.profile,
     );
+    final availableTypes = MealType.values.where((t) => menu.containsKey(t)).toList();
     return [
       Row(
         children: [
@@ -426,8 +427,52 @@ class _NutritionTabState extends State<NutritionTab> {
         ],
       ),
       const SizedBox(height: 6),
-      ...MealType.values.map((t) => _mealCard(t, menu[t]!)),
+      if (availableTypes.isEmpty)
+        _emptyFilterResult()
+      else ...[
+        ...availableTypes.map((t) => _mealCard(t, menu[t]!)),
+        if (availableTypes.length < MealType.values.length)
+          Padding(
+            padding: const EdgeInsets.only(top: 4, bottom: 4),
+            child: Text(
+              'Algunas comidas no tienen alternativas con tus restricciones actuales.',
+              style: TextStyle(fontSize: 12, color: AppColors.muted),
+            ),
+          ),
+      ],
     ];
+  }
+
+  Widget _emptyFilterResult() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.line),
+      ),
+      child: Column(
+        children: [
+          const Text('🚫', style: TextStyle(fontSize: 32)),
+          const SizedBox(height: 8),
+          Text(
+            'Sin alternativas disponibles',
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+              color: AppColors.ink,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Ninguna comida del catálogo es compatible con tus restricciones '
+            'actuales. Revisa tus alergias y condiciones en Ajustes.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 13, color: AppColors.muted),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _mealCard(MealType t, MealIdea m) {

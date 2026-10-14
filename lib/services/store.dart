@@ -14,6 +14,8 @@ import 'auth_service.dart';
 import 'account_preferences.dart';
 import 'profile_repository.dart';
 import 'firebase_profile_repository.dart';
+import 'sync_state.dart';
+import 'unit_system.dart';
 
 /// Perfil remoto por UID y registros locales separados por cuenta.
 class AppStore extends ChangeNotifier {
@@ -42,6 +44,17 @@ class AppStore extends ChangeNotifier {
   Future<void> _transition = Future.value();
   Future<void> _reminderTransition = Future.value();
   int _epoch = 0;
+  // Contador por sesión que distingue entre guardados concurrentes dentro de
+  // la misma sesión (mismo epoch). Cada llamada a _saveRemoteProfile incrementa
+  // este contador; los guardados tardíos verifican que siguen siendo el más nuevo
+  // antes de actualizar el estado en memoria y borrar _kPendingWrite.
+  int _saveGeneration = 0;
+  // Cola de escrituras remotas: garantiza que las transacciones Firestore se
+  // envían en el mismo orden en que se originaron y que solo hay una en vuelo
+  // a la vez. Cuando una edición posterior llega a la cola, la anterior —si aún
+  // no terminó— no puede ya ser la "más reciente"; al obtener su turno la compara
+  // con _saveGeneration y cede sin escribir al servidor.
+  Future<void> _saveQueue = Future<void>.value();
   bool _sessionInitialized = false;
   String? _sessionError;
   String? get sessionError => _sessionError;
@@ -50,6 +63,12 @@ class AppStore extends ChangeNotifier {
   static const _kProfile = 'brio_profile_v1';
   static const _kOnboarded = 'brio_onboarded_v1';
   static const _kTheme = 'brio_theme_v1';
+  static const _kUnits = 'brio_units_v1';
+  static const _kMigrationVersion = 'brio_migration_v1';
+  // Indica que hay una escritura remota pendiente para este UID.
+  // Se establece antes del intento remoto y se borra al confirmar.
+  // Permite recuperar el borrador local tras un reinicio sin sobreescribirlo.
+  static const _kPendingWrite = 'brio_pending_write_v1';
   static const _kLogs = 'brio_daylogs_v1';
   static const _kWeights = 'brio_weights_v1';
   static const _kWorkoutReminder = 'brio_reminder_workout_v1';
@@ -64,6 +83,8 @@ class AppStore extends ChangeNotifier {
   Profile _profile = Profile();
   bool _onboarded = false;
   ThemeMode _themeMode = ThemeMode.system;
+  UnitSystem _units = UnitSystem.metric;
+  SyncState _profileSyncState = SyncState.idle;
   final Map<String, DayLog> _logs = {};
   final List<WeightEntry> _weights = [];
   bool _workoutReminderOn = false;
@@ -81,6 +102,8 @@ class AppStore extends ChangeNotifier {
   Profile get profile => _profile;
   bool get onboarded => _onboarded;
   ThemeMode get themeMode => _themeMode;
+  UnitSystem get units => _units;
+  SyncState get profileSyncState => _profileSyncState;
   bool get loaded => _loaded;
   List<WeightEntry> get weights => List.unmodifiable(_weights);
   bool get workoutReminderOn => _workoutReminderOn;
@@ -112,11 +135,15 @@ class AppStore extends ChangeNotifier {
       return _transition;
     _sessionInitialized = true;
     final epoch = ++_epoch;
+    _saveGeneration = 0;
+    _saveQueue = Future<void>.value();
     _account = user;
     _accountPrefs = null;
     _profile = Profile();
     _onboarded = false;
     _themeMode = ThemeMode.system;
+    _units = UnitSystem.metric;
+    _profileSyncState = SyncState.idle;
     _logs.clear();
     _weights.clear();
     _exerciseWeights.clear();
@@ -145,13 +172,59 @@ class AppStore extends ChangeNotifier {
         final p = AccountPreferences(storage, user.uid);
         _accountPrefs = p;
         _readAccountCache(p);
-        final remote = await _profiles.loadOrCreate(user);
-        if (epoch != _epoch) return;
-        _profile = remote.profile;
-        _onboarded = remote.onboarded;
-        _isTrainer = remote.trainer;
-        await p.setString(_kProfile, _profile.toJson());
-        await p.setBool(_kOnboarded, remote.onboarded);
+        await _runMigrationIfNeeded(p, user.uid);
+        final hasPending = p.getBool(_kPendingWrite) ?? false;
+        if (!hasPending) {
+          // Sin escritura pendiente: el remoto es la fuente de verdad.
+          final remote = await _profiles.loadOrCreate(user);
+          if (epoch != _epoch) return;
+          _profile = remote.profile;
+          _onboarded = remote.onboarded;
+          _isTrainer = remote.trainer;
+          await p.setString(_kProfile, _profile.toJson());
+          await p.setBool(_kOnboarded, remote.onboarded);
+        } else {
+          // Hay un borrador pendiente de confirmar: no sobreescribir con remoto.
+          // El perfil ya se cargó desde caché en _readAccountCache.
+          // Intentar sincronizar el pendiente.
+          _profileSyncState = SyncState.pending;
+          final uid2 = user.uid;
+          final snap = _profile.copy();
+          final ob = _onboarded;
+          // Captura generación y slot de cola antes del primer await.
+          // Si el usuario edita mientras el reintento está en vuelo,
+          // _saveRemoteProfile incrementará _saveGeneration; este reintento
+          // detectará que ya no es el más reciente y cederá sin escribir.
+          final myRetryGen = _saveGeneration;
+          final priorRetry = _saveQueue;
+          final retrySlot = Completer<void>();
+          // Error suprimido en la cola para no contaminar el Zone si no hay
+          // guardado posterior que lo observe.
+          _saveQueue = retrySlot.future.catchError((_) {});
+          try {
+            final remote = await _profiles.loadOrCreate(user);
+            if (epoch != _epoch) {
+              retrySlot.complete();
+              return;
+            }
+            _isTrainer = remote.trainer;
+            // Espera a cualquier guardado anterior antes de escribir.
+            await priorRetry;
+            if (epoch != _epoch || myRetryGen != _saveGeneration) {
+              retrySlot.complete();
+              return;
+            }
+            // Reintenta enviar el borrador al servidor.
+            await _profiles.save(uid2, snap, onboarded: ob);
+            retrySlot.complete();
+            if (epoch != _epoch || myRetryGen != _saveGeneration) return;
+            await p.remove(_kPendingWrite);
+            _profileSyncState = SyncState.confirmed;
+          } catch (e) {
+            if (!retrySlot.isCompleted) retrySlot.completeError(e);
+            if (epoch == _epoch) _profileSyncState = SyncState.failed;
+          }
+        }
         if (epoch == _epoch) await _updateReminders();
       }
     } catch (_) {
@@ -173,6 +246,7 @@ class AppStore extends ChangeNotifier {
     if (pj != null) _profile = Profile.fromJson(pj);
     _onboarded = p.getBool(_kOnboarded) ?? false;
     _themeMode = ThemeMode.values[(p.getInt(_kTheme) ?? 0).clamp(0, 2)];
+    _units = UnitSystem.values[(p.getInt(_kUnits) ?? 0).clamp(0, UnitSystem.values.length - 1)];
     _logs
       ..clear()
       ..addEntries(
@@ -419,6 +493,27 @@ class AppStore extends ChangeNotifier {
     await _acceptSession(null);
   }
 
+  /// Paso 3 del Sprint 2: migración segura e idempotente.
+  ///
+  /// Versión actual: 1.
+  /// Lógica: registra que ya se ejecutó la verificación para este UID.
+  /// No migra datos de propietario incierto (claves antiguas `brio_*`):
+  /// esas claves se conservan sin tocar hasta que el propietario sea
+  /// verificado fuera de la app. Este mecanismo garantiza idempotencia:
+  /// si se interrumpe y se reanuda, no duplica datos.
+  static const int _migrationCurrentVersion = 1;
+
+  Future<void> _runMigrationIfNeeded(AccountPreferences p, String uid) async {
+    final done = p.getInt(_kMigrationVersion) ?? 0;
+    if (done >= _migrationCurrentVersion) return;
+
+    // Verificación: ¿hay claves antiguas `brio_*` sin UID asociado?
+    // Por política del Sprint 2, no se asignan al usuario actual porque
+    // no es posible verificar la propiedad con certeza.
+    // Se marca la migración como completada sin mover datos ambiguos.
+    await p.setInt(_kMigrationVersion, _migrationCurrentVersion);
+  }
+
   Future<void> _prefs(Future<void> Function(AccountPreferences p) fn) async {
     final p = _accountPrefs;
     if (p == null || !authed) throw StateError('No hay una sesión lista.');
@@ -440,23 +535,98 @@ class AppStore extends ChangeNotifier {
   }) async {
     final uid = currentUid;
     final epoch = _epoch;
+    // Captura la generación ANTES de cualquier await, de modo que si otro
+    // guardado comienza mientras éste está en vuelo, myGeneration < _saveGeneration.
+    final myGeneration = ++_saveGeneration;
     final cache = _accountPrefs;
     if (uid == null || cache == null || !_loaded || _sessionError != null) {
       throw StateError('No hay una sesión lista.');
     }
     final snapshot = profile.copy();
-    await _profiles.save(uid, snapshot, onboarded: onboarded);
-    if (epoch != _epoch)
+
+    // Guarda localmente primero para preservar el borrador ante errores.
+    await cache.setString(_kProfile, snapshot.toJson());
+    await cache.setBool(_kOnboarded, onboarded);
+    // Marca la escritura como pendiente ANTES del intento remoto.
+    // Si la app se reinicia antes de la confirmación, _restoreAccount
+    // detectará el flag y no sobreescribirá el borrador con el remoto.
+    await cache.setBool(_kPendingWrite, true);
+
+    // Verifica epoch después de los awaits de escritura local: la cuenta puede
+    // haber cambiado mientras SharedPreferences escribía.
+    if (epoch != _epoch) throw StateError('La sesión cambió durante el guardado.');
+
+    // Guard rápido: si una edición más nueva ya comenzó durante las escrituras
+    // locales, no hace falta ni entrar en la cola.
+    if (myGeneration != _saveGeneration) return;
+
+    _profileSyncState = SyncState.saving;
+    notifyListeners();
+
+    // Cola de escrituras por sesión: serializa las transacciones Firestore.
+    // Cada guardado encola su Future y espera al anterior antes de escribir.
+    // Al obtener su turno, revalida la generación: si ya hay un guardado
+    // posterior en espera, cede sin enviar datos viejos al servidor.
+    final priorSave = _saveQueue;
+    final mySlot = Completer<void>();
+    // La cola almacena el future con el error ya suprimido: si ningún guardado
+    // posterior llega a esperar, el error no se propaga al Zone. El slot interno
+    // (mySlot) sigue teniendo el error para que el catch a continuación lo reenvíe.
+    _saveQueue = mySlot.future.catchError((_) {});
+
+    // Espera a que el guardado anterior complete (éxito o error suprimido).
+    await priorSave;
+
+    // Revalidar tras la espera: puede que llegara una edición más nueva.
+    if (epoch != _epoch) {
+      mySlot.complete();
       throw StateError('La sesión cambió durante el guardado.');
+    }
+    if (myGeneration != _saveGeneration) {
+      // Un guardado más reciente ya ocupa la cola — ceder sin escribir al servidor.
+      mySlot.complete();
+      return;
+    }
+
+    try {
+      await _profiles.save(uid, snapshot, onboarded: onboarded);
+      mySlot.complete();
+    } on StateError catch (e) {
+      // La sesión cambió o el perfil aún no existe en el servidor.
+      mySlot.completeError(e);
+      if (epoch == _epoch) {
+        _profileSyncState = SyncState.failed;
+        notifyListeners();
+      }
+      rethrow;
+    } catch (e) {
+      mySlot.completeError(e);
+      if (epoch == _epoch) {
+        final isPermission = e.toString().contains('PERMISSION_DENIED') ||
+            e.toString().contains('permission-denied');
+        _profileSyncState =
+            isPermission ? SyncState.rejected : SyncState.failed;
+        notifyListeners();
+      }
+      rethrow;
+    }
+
+    if (epoch != _epoch) {
+      throw StateError('La sesión cambió durante el guardado.');
+    }
+
+    if (myGeneration != _saveGeneration) return;
+
     _profile = snapshot;
     _onboarded = onboarded;
+    _profileSyncState = SyncState.confirmed;
     if (_weights.isEmpty && onboarded) {
       _weights.add(WeightEntry(DateTime.now(), snapshot.weightKg));
     }
     final weights = _weights.map((e) => e.toJson()).toList();
-    await cache.setString(_kProfile, snapshot.toJson());
-    await cache.setBool(_kOnboarded, onboarded);
     await cache.setStringList(_kWeights, weights);
+    // Borra el flag de escritura pendiente: el servidor confirmó.
+    await cache.remove(_kPendingWrite);
     if (epoch == _epoch) notifyListeners();
   }
 
@@ -464,6 +634,18 @@ class AppStore extends ChangeNotifier {
     _themeMode = mode;
     notifyListeners();
     await _prefs((p) => p.setInt(_kTheme, mode.index));
+  }
+
+  Future<void> setUnits(UnitSystem system) async {
+    _units = system;
+    notifyListeners();
+    await _prefs((p) => p.setInt(_kUnits, system.index));
+  }
+
+  /// Reinicia el estado sync del perfil a idle, por ejemplo tras un reintento.
+  void clearProfileSyncState() {
+    _profileSyncState = SyncState.idle;
+    notifyListeners();
   }
 
   // ── Registros diarios ────────────────────────────────────────────────────

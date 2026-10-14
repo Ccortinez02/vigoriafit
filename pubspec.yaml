@@ -53,6 +53,9 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  integration_test:
+    sdk: flutter
+  http: ^1.2.0
 
   flutter_launcher_icons: ^0.14.3
 

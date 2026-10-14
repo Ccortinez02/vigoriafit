@@ -1,23 +1,41 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/date_symbol_data_local.dart';
-
+import 'firebase_options.dart';
 import 'core/theme.dart';
+import 'debug/network_controller.dart';
 import 'pages/auth_page.dart';
 import 'pages/onboarding_page.dart';
 import 'pages/root_page.dart';
 import 'services/notifications.dart';
 import 'services/store.dart';
 
+// Activado con --dart-define=USE_EMULATOR=true. Nunca activar en producción.
+const _useEmulator = bool.fromEnvironment('USE_EMULATOR');
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   Object? startupError;
   StackTrace? startupStack;
   try {
-    await Firebase.initializeApp();
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+    if (_useEmulator) {
+      await FirebaseAuth.instance.useAuthEmulator('localhost', 9099);
+      FirebaseFirestore.instance.useFirestoreEmulator('localhost', 8080);
+      // Aplicar flags de prueba ANTES de cargar el perfil para que el estado
+      // de red esté listo cuando _restoreAccount empiece a llamar a Firestore.
+      await DebugNetworkController.applyStartupFlags();
+      await DebugNetworkController.start();
+    }
     await initializeDateFormatting('es', null);
-    await Notifications.init();
+    // En modo emulador no se solicitan permisos de notificaciones para no
+    // bloquear la UI con el diálogo del sistema durante pruebas automatizadas.
+    if (!_useEmulator) await Notifications.init();
     await AppStore.instance.load();
   } catch (e, st) {
     startupError = e;

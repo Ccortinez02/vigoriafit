@@ -18,6 +18,8 @@ class _OnboardingPageState extends State<OnboardingPage> {
   final _name = TextEditingController();
   int _step = 0;
   static const _steps = 5;
+  bool _saving = false;
+  String? _saveError;
 
   @override
   void initState() {
@@ -64,18 +66,26 @@ class _OnboardingPageState extends State<OnboardingPage> {
   }
 
   Future<void> _finish() async {
+    if (_saving) return;
     _profile.name = _name.text.trim();
     if (_profile.targetWeightKg == 0)
       _profile.targetWeightKg = _profile.weightKg;
+    setState(() {
+      _saving = true;
+      _saveError = null;
+    });
     try {
       await AppStore.instance.completeOnboarding(_profile);
-    } catch (_) {
-      if (mounted)
-        _snack(
-          'No se pudo guardar el perfil. Revisa la conexión e inténtalo nuevamente.',
-        );
+      // El "gate" de main.dart cambia a RootPage automáticamente.
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _saving = false;
+          _saveError =
+              'No se pudo guardar el perfil. Revisa la conexión e inténtalo nuevamente.';
+        });
+      }
     }
-    // El "gate" de main.dart cambia a RootPage automáticamente.
   }
 
   void _snack(String m) =>
@@ -125,13 +135,48 @@ class _OnboardingPageState extends State<OnboardingPage> {
                 ],
               ),
             ),
+            if (_saveError != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE5544B).withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                        color: const Color(0xFFE5544B).withValues(alpha: 0.4)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.warning_amber_rounded,
+                          size: 18, color: Color(0xFFE5544B)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _saveError!,
+                          style: const TextStyle(
+                              fontSize: 13, color: Color(0xFFE5544B)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
               child: SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed: _next,
-                  child: Text(_step == _steps - 1 ? '¡Empezar!' : 'Continuar'),
+                  onPressed: _saving ? null : _next,
+                  child: _saving
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white),
+                        )
+                      : Text(
+                          _step == _steps - 1 ? '¡Empezar!' : 'Continuar'),
                 ),
               ),
             ),
