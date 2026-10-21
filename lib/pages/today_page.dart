@@ -230,7 +230,7 @@ class TodayTab extends StatelessWidget {
                 // Agua
                 _sectionTitle('Hidratación'),
                 const SizedBox(height: 8),
-                _waterCard(s, p.waterGoal),
+                _waterCard(s),
                 const SizedBox(height: 16),
 
                 // Menú sugerido
@@ -314,8 +314,11 @@ class TodayTab extends StatelessWidget {
     );
   }
 
-  Widget _waterCard(AppStore s, int goal) {
-    final glasses = s.waterToday;
+  Widget _waterCard(AppStore s) {
+    final today   = DateTime.now();
+    final totalMl = s.waters.totalMlForDay(today);
+    final goalMl  = s.waterGoalMl;
+    final pct     = (totalMl / goalMl).clamp(0, 1).toDouble();
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -326,29 +329,39 @@ class TodayTab extends StatelessWidget {
                 const Icon(Icons.water_drop_rounded, color: AppColors.water),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: Text('Agua: $glasses de $goal vasos',
+                  child: Text('$totalMl ml de $goalMl ml',
                       style: TextStyle(
                           fontSize: 15,
                           fontWeight: FontWeight.w700,
                           color: AppColors.ink)),
                 ),
-                IconButton(
-                  onPressed: glasses > 0 ? () => s.addWater(-1) : null,
-                  icon: const Icon(Icons.remove_circle_outline_rounded),
-                  color: AppColors.muted,
-                ),
-                IconButton(
-                  onPressed: () => s.addWater(1),
-                  icon: const Icon(Icons.add_circle_rounded),
-                  color: AppColors.water,
-                ),
+                if (totalMl >= goalMl)
+                  const Icon(Icons.check_circle_rounded,
+                      color: AppColors.success, size: 20),
               ],
             ),
+            const SizedBox(height: 8),
+            Row(children: [
+              for (final ml in [200, 250, 500])
+                Expanded(child: Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: OutlinedButton(
+                    onPressed: () => s.waters.add(ml),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: AppColors.water),
+                      foregroundColor: AppColors.water,
+                      padding: EdgeInsets.zero,
+                      minimumSize: const Size(0, 34),
+                    ),
+                    child: Text('+$ml', style: const TextStyle(fontSize: 12)),
+                  ),
+                )),
+            ]),
             const SizedBox(height: 6),
             ClipRRect(
               borderRadius: BorderRadius.circular(8),
               child: LinearProgressIndicator(
-                value: (glasses / goal).clamp(0, 1).toDouble(),
+                value: pct,
                 minHeight: 9,
                 backgroundColor: AppColors.line,
                 color: AppColors.water,

@@ -16,6 +16,8 @@ import 'profile_repository.dart';
 import 'firebase_profile_repository.dart';
 import 'sync_state.dart';
 import 'unit_system.dart';
+import 'food_service.dart';
+import 'water_service.dart';
 import 'workout_session_service.dart';
 
 /// Perfil remoto por UID y registros locales separados por cuenta.
@@ -25,6 +27,8 @@ class AppStore extends ChangeNotifier {
     required ProfileRepository profiles,
     Future<void> Function()? clearReminders,
     WorkoutSessionService? sessionService,
+    FoodService? foodService,
+    WaterService? waterService,
   }) : _auth = auth,
        _profiles = profiles,
        _clearReminders =
@@ -33,7 +37,9 @@ class AppStore extends ChangeNotifier {
              await Notifications.cancelWorkout();
              await Notifications.cancelWater();
            }),
-       sessions = sessionService ?? WorkoutSessionService();
+       sessions = sessionService ?? WorkoutSessionService(),
+       foods    = foodService  ?? FoodService(),
+       waters   = waterService ?? WaterService();
   static final AppStore instance = AppStore(
     auth: FirebaseAccountAuth(),
     profiles: FirebaseProfileRepository(),
@@ -42,6 +48,10 @@ class AppStore extends ChangeNotifier {
   /// Servicio de sesiones de entrenamiento. Expuesto para que las páginas
   /// puedan suscribirse y llamar sus operaciones.
   final WorkoutSessionService sessions;
+
+  /// Servicios de nutrición e hidratación (Sprint 5).
+  final FoodService  foods;
+  final WaterService waters;
   final AccountAuth _auth;
   final ProfileRepository _profiles;
   final Future<void> Function() _clearReminders;
@@ -169,6 +179,8 @@ class AppStore extends ChangeNotifier {
     _loaded = false;
     _sessionError = null;
     sessions.clearForUser();
+    foods.clearForUser();
+    waters.clearForUser();
     notifyListeners();
     return _transition = _restoreAccount(user, epoch);
   }
@@ -184,6 +196,8 @@ class AppStore extends ChangeNotifier {
         _accountPrefs = p;
         _readAccountCache(p);
         await sessions.loadForUser(p);
+        await foods.loadForUser(p, user.uid);
+        await waters.loadForUser(p, user.uid);
         if (epoch != _epoch) return;
         await _runMigrationIfNeeded(p, user.uid);
         final hasPending = p.getBool(_kPendingWrite) ?? false;
@@ -296,6 +310,10 @@ class AppStore extends ChangeNotifier {
     _authSubscription?.cancel();
     super.dispose();
   }
+
+  // ── Hidratación: meta ────────────────────────────────────────────────────
+  int get waterGoalMl => waters.goalMl;
+  Future<void> setWaterGoalMl(int ml) => waters.setGoalMl(ml);
 
   // ── Rol entrenador / grupos ──────────────────────────────────────────────
   Future<void> setIsTrainer(bool value) async {
