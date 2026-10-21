@@ -5,6 +5,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../data/achievements.dart';
 import '../models/exercise_log.dart';
 import '../models/logs.dart';
 import '../models/profile.dart';
@@ -96,6 +97,7 @@ class AppStore extends ChangeNotifier {
   static const _kExerciseWeights = 'brio_exercise_weights_v1';
   static const _kGroupId = 'brio_group_id_v1';
   static const _kGroupCode = 'brio_group_code_v1';
+  static const _kAchievements = 'brio_achievements_v1';
 
   Profile _profile = Profile();
   bool _onboarded = false;
@@ -115,6 +117,7 @@ class AppStore extends ChangeNotifier {
   String? _groupId;
   String? _groupCode;
   bool _loaded = false;
+  Set<String> _notifiedAchievements = {};
 
   /// Preferencias del usuario actual. Null si no hay sesión activa.
   AccountPreferences? get currentPrefs => _accountPrefs;
@@ -177,6 +180,7 @@ class AppStore extends ChangeNotifier {
     _workoutHour = 18;
     _workoutMinute = 0;
     _loaded = false;
+    _notifiedAchievements = {};
     _sessionError = null;
     sessions.clearForUser();
     foods.clearForUser();
@@ -303,6 +307,8 @@ class AppStore extends ChangeNotifier {
     }
     _groupId = p.getString(_kGroupId);
     _groupCode = p.getString(_kGroupCode);
+    _notifiedAchievements =
+        Set<String>.from(p.getStringList(_kAchievements) ?? []);
   }
 
   @override
@@ -785,12 +791,15 @@ class AppStore extends ChangeNotifier {
   int get totalWorkoutsDone =>
       _logs.values.fold(0, (s, l) => s + l.workouts.length);
 
-  /// Comidas registradas con el escáner IA en toda la historia.
-  int get totalFoodsLogged =>
-      _logs.values.fold(0, (s, l) => s + l.foods.length);
+  /// Comidas registradas (FoodRecord del Sprint 5).
+  int get totalFoodsLogged => foods.records.length;
 
-  /// Días distintos en que se tomó al menos 1 vaso de agua.
-  int get totalWaterDays => _logs.values.where((l) => l.water > 0).length;
+  /// Días distintos con al menos un WaterRecord (Sprint 5).
+  int get totalWaterDays {
+    final days =
+        waters.records.map((r) => dayKey(r.recordedAt.toLocal())).toSet();
+    return days.length;
+  }
 
   /// Puntos de experiencia: entrenar vale más que registrar comida o agua.
   int get totalXp =>
@@ -809,5 +818,59 @@ class AppStore extends ChangeNotifier {
     final span = xpForNextLevel - xpForThisLevel;
     if (span <= 0) return 1;
     return ((totalXp - xpForThisLevel) / span).clamp(0, 1).toDouble();
+  }
+
+  // ── Peso: edición y eliminación (#198) ───────────────────────────────────
+
+  Future<void> updateWeight(String dayKeyStr, double newKg) async {
+    if (!newKg.isFinite || newKg <= 0 || newKg >= 500) {
+      throw ArgumentError('Peso inválido: $newKg');
+    }
+    final i = _weights.indexWhere((w) => dayKey(w.date) == dayKeyStr);
+    if (i < 0) return;
+    _weights[i] = WeightEntry(_weights[i].date, newKg);
+    // Solo actualiza el perfil si era el peso más reciente.
+    if (i == _weights.length - 1) {
+      _profile.weightKg = newKg;
+    }
+    notifyListeners();
+    await _prefs(
+      (p) => p.setStringList(
+        _kWeights,
+        _weights.map((e) => e.toJson()).toList(),
+      ),
+    );
+  }
+
+  Future<void> deleteWeight(String dayKeyStr) async {
+    _weights.removeWhere((w) => dayKey(w.date) == dayKeyStr);
+    if (_weights.isNotEmpty) {
+      _profile.weightKg = _weights.last.kg;
+    }
+    notifyListeners();
+    await _prefs(
+      (p) => p.setStringList(
+        _kWeights,
+        _weights.map((e) => e.toJson()).toList(),
+      ),
+    );
+  }
+
+  // ── Logros: notificación idempotente (#201–#203) ──────────────────────────
+
+  /// Devuelve logros recién desbloqueados que aún no se notificaron.
+  /// Los marca como notificados para evitar repetición en aperturas futuras.
+  Future<List<Achievement>> checkNewAchievements() async {
+    final newOnes = Achievements.all
+        .where((a) => a.check(this) && !_notifiedAchievements.contains(a.id))
+        .toList();
+    if (newOnes.isEmpty) return [];
+    for (final a in newOnes) {
+      _notifiedAchievements.add(a.id);
+    }
+    await _prefs(
+      (p) => p.setStringList(_kAchievements, _notifiedAchievements.toList()),
+    );
+    return newOnes;
   }
 }

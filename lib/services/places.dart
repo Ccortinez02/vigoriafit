@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
@@ -5,6 +6,8 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:geolocator/geolocator.dart';
 
 import '../models/place.dart';
+
+enum LocationResult { ok, denied, deniedForever, serviceDisabled, timeout }
 
 /// Busca gimnasios y tiendas de suplementos/farmacias cercanos.
 ///
@@ -44,37 +47,49 @@ class Places {
         address: m['a'] as String?,
       );
 
-  /// Pide (o verifica) el permiso de ubicación. Devuelve la posición actual
-  /// con la mejor precisión posible, o null si el usuario lo negó o el GPS
-  /// está apagado.
+  /// Pide (o verifica) el permiso de ubicación, devuelve posición y motivo.
   ///
-  /// Con precisión "media" el GPS puede desviarse varios kilómetros (usa la
-  /// antena de celular en vez del GPS real), lo que hacía que apareciera
-  /// "cerca" algo que en realidad está a 10 km. Se pide precisión alta con
-  /// un tiempo límite, y si no llega a tiempo se usa la última ubicación
-  /// conocida del teléfono antes de rendirse.
-  static Future<Position?> currentPosition() async {
-    if (!await Geolocator.isLocationServiceEnabled()) return null;
+  /// Devuelve `(Position, LocationResult.ok)` en caso de éxito.
+  /// En cualquier fallo devuelve `(null, <motivo>)` para que la UI
+  /// pueda distinguir entre permiso negado permanente (→ openAppSettings),
+  /// servicio apagado, o timeout.
+  static Future<(Position?, LocationResult)> currentPositionWithReason() async {
+    if (!await Geolocator.isLocationServiceEnabled()) {
+      return (null, LocationResult.serviceDisabled);
+    }
     var perm = await Geolocator.checkPermission();
     if (perm == LocationPermission.denied) {
       perm = await Geolocator.requestPermission();
     }
-    if (perm == LocationPermission.denied ||
-        perm == LocationPermission.deniedForever) {
-      return null;
+    if (perm == LocationPermission.deniedForever) {
+      return (null, LocationResult.deniedForever);
+    }
+    if (perm == LocationPermission.denied) {
+      return (null, LocationResult.denied);
     }
     try {
-      return await Geolocator.getCurrentPosition(
+      final pos = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.best,
           timeLimit: Duration(seconds: 12),
         ),
       );
+      return (pos, LocationResult.ok);
+    } on TimeoutException {
+      final last = await Geolocator.getLastKnownPosition();
+      if (last != null) return (last, LocationResult.ok);
+      return (null, LocationResult.timeout);
     } catch (_) {
-      // El GPS de alta precisión puede tardar demasiado en interiores; se
-      // intenta con la última posición conocida antes de fallar del todo.
-      return Geolocator.getLastKnownPosition();
+      final last = await Geolocator.getLastKnownPosition();
+      if (last != null) return (last, LocationResult.ok);
+      return (null, LocationResult.timeout);
     }
+  }
+
+  /// Versión simplificada para compatibilidad retroactiva.
+  static Future<Position?> currentPosition() async {
+    final (pos, _) = await currentPositionWithReason();
+    return pos;
   }
 
   /// Busca lugares del tipo pedido dentro de [radiusKm] alrededor de
