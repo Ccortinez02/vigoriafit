@@ -90,12 +90,62 @@ test('only group trainer assigns routine; ownership cannot change',async()=>{
   await assertSucceeds(updateDoc(doc(db('trainer',{trainer:true}),'groups/g1'),patch));
   await assertFails(updateDoc(doc(db('trainer',{trainer:true}),'groups/g1'),{trainerId:'alice',assignedAt:serverTimestamp()}));
 });
+test('only group owner can create and update assignments; members can read',async()=>{
+  await createGroup(); await join();
+  const now = Timestamp.now();
+  const asgn = {
+    groupId:'g1', trainerId:'trainer', workoutId:'w1', workoutTitle:'Routine',
+    exercisesSnapshot:[], startAt:serverTimestamp(), daysPerWeek:3,
+    timezone:'America/Santiago', status:'active', createdAt:serverTimestamp(),
+  };
+  // Alumno no puede crear
+  await assertFails(setDoc(doc(db('alice'),'groups/g1/assignments/a1'),asgn));
+  // Otro entrenador no puede crear
+  await assertFails(setDoc(doc(db('other',{trainer:true}),'groups/g1/assignments/a1'),asgn));
+  // Dueño puede crear
+  await assertSucceeds(setDoc(doc(db('trainer',{trainer:true}),'groups/g1/assignments/a1'),asgn));
+  // Alumno puede leer la asignación
+  await assertSucceeds(getDoc(doc(db('alice'),'groups/g1/assignments/a1')));
+  // Entrenador puede listar asignaciones
+  await assertSucceeds(getDocs(collection(db('trainer',{trainer:true}),'groups/g1/assignments')));
+  // Solo status puede cambiar en update
+  await assertSucceeds(updateDoc(doc(db('trainer',{trainer:true}),'groups/g1/assignments/a1'),{status:'inactive'}));
+  // No puede cambiar otro campo en update
+  await assertFails(updateDoc(doc(db('trainer',{trainer:true}),'groups/g1/assignments/a1'),{daysPerWeek:5}));
+  // No puede borrar
+  await assertFails(deleteDoc(doc(db('trainer',{trainer:true}),'groups/g1/assignments/a1')));
+});
+test('assignment validation rejects missing or out-of-range fields',async()=>{
+  await createGroup();
+  const base = {
+    groupId:'g1', trainerId:'trainer', workoutId:'w1', workoutTitle:'Routine',
+    exercisesSnapshot:[], startAt:serverTimestamp(), daysPerWeek:3,
+    timezone:'America/Santiago', status:'active', createdAt:serverTimestamp(),
+  };
+  // daysPerWeek fuera de rango
+  await assertFails(setDoc(doc(db('trainer',{trainer:true}),'groups/g1/assignments/bad1'),{...base,daysPerWeek:0}));
+  await assertFails(setDoc(doc(db('trainer',{trainer:true}),'groups/g1/assignments/bad2'),{...base,daysPerWeek:8}));
+  // status inválido al crear
+  await assertFails(setDoc(doc(db('trainer',{trainer:true}),'groups/g1/assignments/bad3'),{...base,status:'inactive'}));
+  // campo extra
+  await assertFails(setDoc(doc(db('trainer',{trainer:true}),'groups/g1/assignments/bad4'),{...base,extra:'oops'}));
+});
 test('completion ownership and leaving a group enforce access',async()=>{
   await createGroup(); await join();
-  const completion={userId:'alice',userName:'Alice',workoutId:'w1',workoutTitle:'Routine',completedAt:serverTimestamp()};
-  await assertFails(setDoc(doc(db('bob'),'groups/g1/completions/c1'),completion));
-  await assertFails(setDoc(doc(db('alice'),'groups/g1/completions/c1'),{...completion,userId:'bob'}));
-  await assertSucceeds(setDoc(doc(db('alice'),'groups/g1/completions/c1'),completion));
+  // El doc ID debe coincidir con sessionId (idempotencia garantizada por reglas).
+  const sid = 'sess-uuid-001';
+  const completion={sessionId:sid,userId:'alice',userName:'Alice',workoutId:'w1',workoutTitle:'Routine',completedAt:serverTimestamp()};
+  // No-miembro no puede crear
+  await assertFails(setDoc(doc(db('bob'),'groups/g1/completions/'+sid),completion));
+  // No puede declarar userId ajeno
+  await assertFails(setDoc(doc(db('alice'),'groups/g1/completions/'+sid),{...completion,userId:'bob'}));
+  // Doc ID != sessionId → denegado
+  await assertFails(setDoc(doc(db('alice'),'groups/g1/completions/wrong-id'),completion));
+  // Crear válida → permitido
+  await assertSucceeds(setDoc(doc(db('alice'),'groups/g1/completions/'+sid),completion));
+  // Reintento con mismo doc → denegado (update: if false)
+  await assertFails(setDoc(doc(db('alice'),'groups/g1/completions/'+sid),completion));
+  // Entrenador puede listar completions
   await assertSucceeds(getDocs(query(collection(db('trainer',{trainer:true}),'groups/g1/completions'),where('completedAt','>',Timestamp.fromMillis(0)))));
   await assertSucceeds(deleteDoc(doc(db('alice'),'groups/g1/members/alice')));
   await assertFails(getDoc(doc(db('alice'),'groups/g1')));

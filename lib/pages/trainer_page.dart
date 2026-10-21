@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-
 import '../core/theme.dart';
 import '../data/workouts.dart';
+import 'package:intl/intl.dart';
+
+import '../models/assignment.dart';
 import '../models/workout.dart';
 import '../services/store.dart';
 import '../services/trainer_service.dart';
@@ -21,6 +23,7 @@ class _TrainerPageState extends State<TrainerPage> {
   bool _loadingMembers = false;
   List<GroupMember> _members = [];
   Map<String, dynamic>? _group;
+  Assignment? _activeAssignment;
 
   @override
   void initState() {
@@ -57,12 +60,16 @@ class _TrainerPageState extends State<TrainerPage> {
     if (groupId == null) return;
     setState(() => _loadingMembers = true);
     try {
-      final group = await TrainerService.getGroup(groupId);
-      final members = await TrainerService.membersWithAdherence(groupId);
+      final results = await Future.wait([
+        TrainerService.getGroup(groupId),
+        TrainerService.membersWithAdherence(groupId),
+        TrainerService.getActiveAssignment(groupId),
+      ]);
       if (mounted) {
         setState(() {
-          _group = group;
-          _members = members;
+          _group = results[0] as Map<String, dynamic>?;
+          _members = results[1] as List<GroupMember>;
+          _activeAssignment = results[2] as Assignment?;
         });
       }
     } catch (_) {
@@ -72,9 +79,11 @@ class _TrainerPageState extends State<TrainerPage> {
     }
   }
 
-  Future<void> _assignWorkout() async {
+  Future<void> _createAssignment() async {
     final groupId = AppStore.instance.groupId;
     if (groupId == null) return;
+
+    // Paso 1: elegir rutina
     final chosen = await showModalBottomSheet<Workout>(
       context: context,
       isScrollControlled: true,
@@ -88,19 +97,12 @@ class _TrainerPageState extends State<TrainerPage> {
         builder: (ctx, scrollCtrl) => ListView(
           controller: scrollCtrl,
           padding: EdgeInsets.fromLTRB(
-            20,
-            20,
-            20,
-            MediaQuery.of(ctx).padding.bottom + 30,
+            20, 20, 20, MediaQuery.of(ctx).padding.bottom + 30,
           ),
           children: [
             Text(
               'Elige una rutina para asignar',
-              style: TextStyle(
-                fontSize: 17,
-                fontWeight: FontWeight.w800,
-                color: AppColors.ink,
-              ),
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: AppColors.ink),
             ),
             const SizedBox(height: 14),
             ...Workouts.all.map(
@@ -121,27 +123,12 @@ class _TrainerPageState extends State<TrainerPage> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(
-                                w.title,
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                  color: AppColors.ink,
-                                ),
-                              ),
-                              Text(
-                                '${w.minutes} min · ${w.focus}',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: AppColors.muted,
-                                ),
-                              ),
+                              Text(w.title, style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.ink)),
+                              Text('${w.minutes} min · ${w.focus}', style: TextStyle(fontSize: 12, color: AppColors.muted)),
                             ],
                           ),
                         ),
-                        Icon(
-                          Icons.chevron_right_rounded,
-                          color: AppColors.faint,
-                        ),
+                        Icon(Icons.chevron_right_rounded, color: AppColors.faint),
                       ],
                     ),
                   ),
@@ -152,14 +139,93 @@ class _TrainerPageState extends State<TrainerPage> {
         ),
       ),
     );
-    if (chosen == null) return;
-    await TrainerService.assignWorkout(groupId, chosen);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Asignaste "${chosen.title}" al grupo ✅')),
+    if (chosen == null || !mounted) return;
+
+    // Paso 2: configurar días por semana
+    int daysPerWeek = 3;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text('Configurar asignación'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(chosen.title, style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.brand)),
+              const SizedBox(height: 16),
+              Text('Días por semana: $daysPerWeek', style: TextStyle(color: AppColors.ink)),
+              Slider(
+                value: daysPerWeek.toDouble(),
+                min: 1,
+                max: 7,
+                divisions: 6,
+                label: '$daysPerWeek',
+                activeColor: AppColors.brand,
+                onChanged: (v) => setDialogState(() => daysPerWeek = v.round()),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+            ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Asignar')),
+          ],
+        ),
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    try {
+      await TrainerService.createAssignment(
+        groupId,
+        chosen,
+        daysPerWeek: daysPerWeek,
+        startAt: DateTime.now(),
       );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('"${chosen.title}" asignada al grupo — $daysPerWeek días/semana')),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No se pudo crear la asignación.')),
+        );
+      }
     }
     await _refresh();
+  }
+
+  Future<void> _removeMember(GroupMember m) async {
+    final groupId = AppStore.instance.groupId;
+    if (groupId == null) return;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Retirar alumno'),
+        content: Text('¿Retirar a ${m.name} del grupo?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: AppColors.danger),
+            child: const Text('Retirar'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    try {
+      await TrainerService.removeMember(groupId, m.userId);
+      await _refresh();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No se pudo retirar al alumno.')),
+        );
+      }
+    }
   }
 
   @override
@@ -283,10 +349,12 @@ class _TrainerPageState extends State<TrainerPage> {
             ),
           ),
           const SizedBox(height: 18),
+          if (_activeAssignment != null) _assignmentBanner(_activeAssignment!),
+          const SizedBox(height: 10),
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
-              onPressed: _assignWorkout,
+              onPressed: _createAssignment,
               style: OutlinedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 13),
                 side: const BorderSide(color: AppColors.brand),
@@ -299,7 +367,7 @@ class _TrainerPageState extends State<TrainerPage> {
               label: Text(
                 assignedTitle == null
                     ? 'Asignar una rutina al grupo'
-                    : 'Rutina asignada: $assignedTitle · cambiar',
+                    : 'Nueva asignación (actual: $assignedTitle)',
               ),
             ),
           ),
@@ -346,6 +414,39 @@ class _TrainerPageState extends State<TrainerPage> {
             )
           else
             ..._members.map(_memberTile),
+        ],
+      ),
+    );
+  }
+
+  Widget _assignmentBanner(Assignment a) {
+    final fmt = DateFormat('d MMM', 'es');
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.brandSoft,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.brand.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.fitness_center_rounded, size: 18, color: AppColors.brand),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Asignación activa: ${a.workoutTitle}',
+                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppColors.brandDark),
+                ),
+                Text(
+                  'Desde ${fmt.format(a.startAt)} · ${a.daysPerWeek} días/semana',
+                  style: TextStyle(fontSize: 12, color: AppColors.brandDark.withValues(alpha: 0.7)),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -417,6 +518,14 @@ class _TrainerPageState extends State<TrainerPage> {
               size: 18,
               color: AppColors.warn,
             ),
+          const SizedBox(width: 4),
+          IconButton(
+            onPressed: () => _removeMember(m),
+            icon: const Icon(Icons.person_remove_rounded, size: 18),
+            color: AppColors.danger,
+            tooltip: 'Retirar alumno',
+            visualDensity: VisualDensity.compact,
+          ),
         ],
       ),
     );

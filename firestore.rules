@@ -99,15 +99,47 @@ service cloud.firestore {
         allow update: if false;
         allow delete: if owner(uid) || groupOwner(gid);
       }
-      match /completions/{id} {
+      match /completions/{sid} {
         allow read: if groupOwner(gid) || (signedIn() && member(gid) && resource.data.userId == request.auth.uid);
+        // sid (doc ID) debe coincidir con sessionId: garantía de idempotencia.
+        // Un segundo intento con el mismo sessionId falla aquí (allow update: if false),
+        // y el cliente usa una transacción que omite el set si el doc ya existe.
         allow create: if member(gid)
-          && request.resource.data.keys().hasAll(['userId','userName','workoutId','workoutTitle','completedAt'])
-          && request.resource.data.keys().hasOnly(['userId','userName','workoutId','workoutTitle','completedAt'])
+          && sid == request.resource.data.sessionId
+          && request.resource.data.keys().hasAll(['sessionId','userId','userName','workoutId','workoutTitle','completedAt'])
+          && request.resource.data.keys().hasOnly(['sessionId','userId','userName','workoutId','workoutTitle','completedAt','assignmentId'])
+          && text(request.resource.data.sessionId,128)
           && request.resource.data.userId == request.auth.uid
           && text(request.resource.data.userName,120) && text(request.resource.data.workoutId,100)
-          && text(request.resource.data.workoutTitle,200) && request.resource.data.completedAt == request.time;
+          && text(request.resource.data.workoutTitle,200)
+          && request.resource.data.completedAt == request.time
+          && (!request.resource.data.keys().hasAny(['assignmentId']) || text(request.resource.data.assignmentId,128));
         allow update, delete: if false;
+      }
+      function validAssignment(d) {
+        return d.keys().hasAll(['groupId','trainerId','workoutId','workoutTitle','exercisesSnapshot','startAt','daysPerWeek','timezone','status','createdAt'])
+          && d.keys().hasOnly(['groupId','trainerId','workoutId','workoutTitle','exercisesSnapshot','startAt','endAt','daysPerWeek','timezone','status','createdAt'])
+          && text(d.groupId,128) && text(d.trainerId,128)
+          && text(d.workoutId,128) && text(d.workoutTitle,200)
+          && d.exercisesSnapshot is list && d.exercisesSnapshot.size() <= 30
+          && d.startAt is timestamp
+          && d.daysPerWeek is int && d.daysPerWeek >= 1 && d.daysPerWeek <= 7
+          && text(d.timezone,64)
+          && (d.status == 'active' || d.status == 'inactive')
+          && d.createdAt is timestamp;
+      }
+      match /assignments/{aid} {
+        allow get, list: if groupOwner(gid) || member(gid);
+        allow create: if groupOwner(gid) && validAssignment(request.resource.data)
+          && request.resource.data.groupId == gid
+          && request.resource.data.trainerId == request.auth.uid
+          && request.resource.data.status == 'active'
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.startAt == request.time;
+        allow update: if groupOwner(gid)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+          && (request.resource.data.status == 'active' || request.resource.data.status == 'inactive');
+        allow delete: if false;
       }
     }
     match /groupInvites/{code} {

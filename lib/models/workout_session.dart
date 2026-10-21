@@ -139,6 +139,12 @@ class WorkoutSession {
   DateTime? finishedAt;
   SessionSyncState syncState;
 
+  /// ID de la asignación del entrenador, si la sesión corresponde a una.
+  final String? assignmentId;
+
+  /// ID del grupo al que pertenece la asignación.
+  final String? groupId;
+
   WorkoutSession({
     required this.id,
     required this.uid,
@@ -149,6 +155,8 @@ class WorkoutSession {
     List<SessionExercise>? exercises,
     this.finishedAt,
     this.syncState = SessionSyncState.local,
+    this.assignmentId,
+    this.groupId,
   }) : exercises = exercises ?? [];
 
   int get totalDoneSeries =>
@@ -183,6 +191,8 @@ class WorkoutSession {
         'ex': exercises.map((e) => e.toMap()).toList(),
         if (finishedAt != null) 'fa': finishedAt!.toIso8601String(),
         'ss': syncState.index,
+        if (assignmentId != null) 'aid': assignmentId,
+        if (groupId != null) 'gid': groupId,
       };
 
   factory WorkoutSession.fromMap(Map<String, dynamic> m) => WorkoutSession(
@@ -200,6 +210,8 @@ class WorkoutSession {
             m['fa'] != null ? DateTime.parse(m['fa'] as String) : null,
         syncState:
             SessionSyncState.values[(m['ss'] as int? ?? 0).clamp(0, 3)],
+        assignmentId: m['aid'] as String?,
+        groupId: m['gid'] as String?,
       );
 
   String toJson() => jsonEncode(toMap());
