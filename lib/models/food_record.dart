@@ -29,6 +29,8 @@ class FoodRecord {
   final DateTime consumedAt;
   final DateTime createdAt;
   final DateTime updatedAt;
+  // null = entrada manual; 'AI estimate' = estimación de Gemini Vision
+  final String? aiSource;
 
   const FoodRecord({
     required this.id,
@@ -47,6 +49,7 @@ class FoodRecord {
     required this.consumedAt,
     required this.createdAt,
     required this.updatedAt,
+    this.aiSource,
   });
 
   // ── Nutrientes calculados ────────────────────────────────────────────────
@@ -61,6 +64,7 @@ class FoodRecord {
     MealType? mealType,
     DateTime? consumedAt,
     DateTime? updatedAt,
+    String?   aiSource,
   }) => FoodRecord(
     id:         id,
     uid:        uid,
@@ -78,6 +82,7 @@ class FoodRecord {
     consumedAt: consumedAt ?? this.consumedAt,
     createdAt:  createdAt,
     updatedAt:  updatedAt  ?? this.updatedAt,
+    aiSource:   aiSource   ?? this.aiSource,
   );
 
   // ── Serialización ─────────────────────────────────────────────────────────
@@ -98,6 +103,7 @@ class FoodRecord {
     'consumedAt': consumedAt.toIso8601String(),
     'createdAt':  createdAt.toIso8601String(),
     'updatedAt':  updatedAt.toIso8601String(),
+    if (aiSource != null) 'aiSource': aiSource,
   };
 
   factory FoodRecord.fromMap(Map<String, dynamic> m) => FoodRecord(
@@ -117,6 +123,7 @@ class FoodRecord {
     consumedAt: DateTime.parse(m['consumedAt'] as String),
     createdAt:  DateTime.parse(m['createdAt'] as String),
     updatedAt:  DateTime.parse(m['updatedAt'] as String),
+    aiSource:   m['aiSource'] as String?,
   );
 
   String toJson() => jsonEncode(toMap());
