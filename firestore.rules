@@ -49,6 +49,51 @@ service cloud.firestore {
         allow create, update: if owner(uid) && id == 'health_profile'
           && existsAfter(/databases/$(database)/documents/users/$(uid)) && validHealth(request.resource.data);
       }
+      function validFoodRecord(d) {
+        return d.keys().hasAll(['id','uid','foodId','foodName','refQty','refUnit','kcalRef','proteinRef','carbsRef','fatRef','qty','unit','meal','consumedAt','createdAt','updatedAt'])
+          && d.keys().hasOnly(['id','uid','foodId','foodName','refQty','refUnit','kcalRef','proteinRef','carbsRef','fatRef','qty','unit','meal','consumedAt','createdAt','updatedAt'])
+          && text(d.id,128) && d.uid == uid
+          && text(d.foodId,128) && text(d.foodName,200)
+          && d.refQty is number && d.refQty > 0
+          && text(d.refUnit,8)
+          && d.kcalRef is number && d.kcalRef >= 0
+          && d.proteinRef is number && d.proteinRef >= 0
+          && d.carbsRef is number && d.carbsRef >= 0
+          && d.fatRef is number && d.fatRef >= 0
+          && d.qty is number && d.qty > 0
+          && text(d.unit,8)
+          && d.meal is int && d.meal >= 0 && d.meal <= 4
+          && d.consumedAt is timestamp
+          && d.createdAt is timestamp
+          && d.updatedAt is timestamp;
+      }
+      function validWaterRecord(d) {
+        return d.keys().hasAll(['id','uid','ml','recordedAt','createdAt','updatedAt'])
+          && d.keys().hasOnly(['id','uid','ml','recordedAt','createdAt','updatedAt'])
+          && text(d.id,128) && d.uid == uid
+          && d.ml is int && d.ml > 0
+          && d.recordedAt is timestamp
+          && d.createdAt is timestamp
+          && d.updatedAt is timestamp;
+      }
+      match /food_records/{rid} {
+        allow get, list: if owner(uid);
+        allow delete: if owner(uid);
+        allow create: if owner(uid) && validFoodRecord(request.resource.data)
+          && request.resource.data.id == rid;
+        allow update: if owner(uid) && validFoodRecord(request.resource.data)
+          && request.resource.data.id == resource.data.id
+          && request.resource.data.createdAt == resource.data.createdAt;
+      }
+      match /water_records/{rid} {
+        allow get, list: if owner(uid);
+        allow delete: if owner(uid);
+        allow create: if owner(uid) && validWaterRecord(request.resource.data)
+          && request.resource.data.id == rid;
+        allow update: if owner(uid) && validWaterRecord(request.resource.data)
+          && request.resource.data.id == resource.data.id
+          && request.resource.data.createdAt == resource.data.createdAt;
+      }
       match /workout_sessions/{sessionId} {
         allow get, list: if owner(uid);
         allow delete: if false;

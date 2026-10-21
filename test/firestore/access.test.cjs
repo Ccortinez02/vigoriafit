@@ -150,3 +150,105 @@ test('completion ownership and leaving a group enforce access',async()=>{
   await assertSucceeds(deleteDoc(doc(db('alice'),'groups/g1/members/alice')));
   await assertFails(getDoc(doc(db('alice'),'groups/g1')));
 });
+
+// ── Sprint 5: food_records y water_records ────────────────────────────────
+
+// Timestamp fijo para createdAt: permite que el valor se repita entre create y update.
+const FIXED_CREATED = Timestamp.fromMillis(1700000000000);
+const foodRecord = (uid='alice', rid='fr1', overrides={}) => ({
+  id:rid, uid, foodId:'pollo_pechuga_cocida', foodName:'Pollo pechuga cocida',
+  refQty:100, refUnit:'g', kcalRef:165, proteinRef:31, carbsRef:0, fatRef:3.57,
+  qty:150, unit:'g', meal:1,
+  consumedAt:serverTimestamp(), createdAt:FIXED_CREATED, updatedAt:serverTimestamp(),
+  ...overrides,
+});
+const waterRecord = (uid='alice', rid='wr1', overrides={}) => ({
+  id:rid, uid, ml:250,
+  recordedAt:serverTimestamp(), createdAt:FIXED_CREATED, updatedAt:serverTimestamp(),
+  ...overrides,
+});
+
+test('owner creates, reads and deletes own food_records; others cannot',async()=>{
+  await createUser();
+  const rid = 'fr1';
+  // Propietario crea
+  await assertSucceeds(setDoc(doc(db('alice'),`users/alice/food_records/${rid}`), foodRecord()));
+  // Propietario lee
+  await assertSucceeds(getDoc(doc(db('alice'),`users/alice/food_records/${rid}`)));
+  await assertSucceeds(getDocs(collection(db('alice'),'users/alice/food_records')));
+  // Otro usuario no puede leer ni escribir
+  await assertFails(getDoc(doc(db('bob'),`users/alice/food_records/${rid}`)));
+  await assertFails(setDoc(doc(db('bob'),`users/alice/food_records/${rid}`), foodRecord('bob',rid)));
+  // No autenticado tampoco
+  await assertFails(getDoc(doc(db(null),`users/alice/food_records/${rid}`)));
+  // Propietario elimina
+  await assertSucceeds(deleteDoc(doc(db('alice'),`users/alice/food_records/${rid}`)));
+});
+
+test('food_record update: propietario puede actualizar qty y meal; no puede cambiar id ni createdAt',async()=>{
+  await createUser();
+  const rid = 'fr2';
+  await assertSucceeds(setDoc(doc(db('alice'),`users/alice/food_records/${rid}`), foodRecord('alice',rid)));
+  // Actualización válida: cambia qty
+  await assertSucceeds(setDoc(doc(db('alice'),`users/alice/food_records/${rid}`),
+    foodRecord('alice',rid,{qty:200,updatedAt:serverTimestamp()})));
+  // No puede cambiar el id del registro
+  await assertFails(setDoc(doc(db('alice'),`users/alice/food_records/${rid}`),
+    foodRecord('alice',rid,{id:'other-id'})));
+  // Campo extra denegado
+  await assertFails(setDoc(doc(db('alice'),`users/alice/food_records/${rid}`),
+    foodRecord('alice',rid,{extra:'oops'})));
+});
+
+test('food_record validation rejects invalid data',async()=>{
+  await createUser();
+  // qty <= 0 denegado
+  await assertFails(setDoc(doc(db('alice'),'users/alice/food_records/bad1'), foodRecord('alice','bad1',{qty:0})));
+  // refQty <= 0 denegado
+  await assertFails(setDoc(doc(db('alice'),'users/alice/food_records/bad2'), foodRecord('alice','bad2',{refQty:-1})));
+  // uid distinto del autenticado
+  await assertFails(setDoc(doc(db('alice'),'users/alice/food_records/bad3'), foodRecord('bob','bad3')));
+  // id distinto del doc path
+  await assertFails(setDoc(doc(db('alice'),'users/alice/food_records/bad4'), foodRecord('alice','wrong-id')));
+  // meal fuera de rango
+  await assertFails(setDoc(doc(db('alice'),'users/alice/food_records/bad5'), foodRecord('alice','bad5',{meal:10})));
+});
+
+test('owner creates, reads and deletes own water_records; others cannot',async()=>{
+  await createUser();
+  const rid = 'wr1';
+  // Propietario crea
+  await assertSucceeds(setDoc(doc(db('alice'),`users/alice/water_records/${rid}`), waterRecord()));
+  // Propietario lee y lista
+  await assertSucceeds(getDoc(doc(db('alice'),`users/alice/water_records/${rid}`)));
+  await assertSucceeds(getDocs(collection(db('alice'),'users/alice/water_records')));
+  // Otro usuario denegado
+  await assertFails(getDoc(doc(db('bob'),`users/alice/water_records/${rid}`)));
+  await assertFails(setDoc(doc(db('bob'),`users/alice/water_records/${rid}`), waterRecord('bob',rid)));
+  // Propietario elimina (#257: corrección borrando el registro)
+  await assertSucceeds(deleteDoc(doc(db('alice'),`users/alice/water_records/${rid}`)));
+});
+
+test('water_record update: propietario puede corregir ml; no puede cambiar id (#257)',async()=>{
+  await createUser();
+  const rid = 'wr2';
+  await assertSucceeds(setDoc(doc(db('alice'),`users/alice/water_records/${rid}`), waterRecord('alice',rid)));
+  // Corrección válida: actualizar ml
+  await assertSucceeds(setDoc(doc(db('alice'),`users/alice/water_records/${rid}`),
+    waterRecord('alice',rid,{ml:500,updatedAt:serverTimestamp()})));
+  // id inmutable en update
+  await assertFails(setDoc(doc(db('alice'),`users/alice/water_records/${rid}`),
+    waterRecord('alice',rid,{id:'other-id'})));
+});
+
+test('water_record validation rejects invalid data',async()=>{
+  await createUser();
+  // ml <= 0 denegado
+  await assertFails(setDoc(doc(db('alice'),'users/alice/water_records/bad1'), waterRecord('alice','bad1',{ml:0})));
+  // uid ajeno
+  await assertFails(setDoc(doc(db('alice'),'users/alice/water_records/bad2'), waterRecord('bob','bad2')));
+  // id distinto del path
+  await assertFails(setDoc(doc(db('alice'),'users/alice/water_records/bad3'), waterRecord('alice','wrong-id')));
+  // campo extra
+  await assertFails(setDoc(doc(db('alice'),'users/alice/water_records/bad4'), waterRecord('alice','bad4',{extra:'x'})));
+});
