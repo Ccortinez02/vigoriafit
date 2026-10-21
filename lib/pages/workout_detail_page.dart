@@ -6,7 +6,6 @@ import '../core/theme.dart';
 import '../models/exercise_log.dart';
 import '../models/workout.dart';
 import '../services/store.dart';
-import '../services/trainer_service.dart';
 import 'workout_session_page.dart';
 
 /// Detalle de una rutina: lista de ejercicios y botón para marcarla completada.
@@ -91,14 +90,6 @@ class WorkoutDetailPage extends StatelessWidget {
                       : OutlinedButton.icon(
                           onPressed: () {
                             s.toggleWorkoutDone(workout.id);
-                            if (s.inGroup && s.groupId != null) {
-                              TrainerService.logCompletion(
-                                s.groupId!,
-                                s.localUserId,
-                                s.profile.name,
-                                workout,
-                              );
-                            }
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
                                   content: Text('Rutina marcada como hecha.')),
@@ -713,14 +704,6 @@ class _StartButtonState extends State<_StartButton> {
       if (s.sessions.activeSession == null) {
         if (!s.isWorkoutDoneToday(widget.workout.id)) {
           await s.toggleWorkoutDone(widget.workout.id);
-        }
-        if (s.inGroup && s.groupId != null) {
-          TrainerService.logCompletion(
-            s.groupId!,
-            s.localUserId,
-            s.profile.name,
-            widget.workout,
-          );
         }
       }
     } finally {

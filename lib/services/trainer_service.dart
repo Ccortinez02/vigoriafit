@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+import '../models/assignment.dart';
 import '../models/workout.dart';
 
 /// Un alumno dentro de un grupo, con su adherencia calculada.
@@ -109,22 +110,94 @@ class TrainerService {
     return doc.data();
   }
 
-  /// Registra que un alumno completó un entrenamiento (para la adherencia
-  /// que ve el entrenador).
+  /// Registra cumplimiento de un entrenamiento. Usa [sessionId] como ID del
+  /// documento: la operación es idempotente (reintentos seguros, sin duplicados).
   static Future<void> logCompletion(
     String groupId,
+    String sessionId,
     String userId,
     String userName,
-    Workout w,
-  ) async {
-    await _groups.doc(groupId).collection('completions').add({
-      'userId': userId,
-      'userName': userName,
-      'workoutId': w.id,
-      'workoutTitle': w.title,
-      'completedAt': FieldValue.serverTimestamp(),
+    Workout w, {
+    String? assignmentId,
+  }) async {
+    final docRef =
+        _groups.doc(groupId).collection('completions').doc(sessionId);
+    await _db.runTransaction((tx) async {
+      final snap = await tx.get(docRef);
+      if (snap.exists) return; // idempotente
+      tx.set(docRef, {
+        'sessionId': sessionId,
+        'userId': userId,
+        'userName': userName,
+        'workoutId': w.id,
+        'workoutTitle': w.title,
+        'completedAt': FieldValue.serverTimestamp(),
+        if (assignmentId != null) 'assignmentId': assignmentId,
+      });
     });
   }
+
+  /// Crea una asignación de rutina al grupo y devuelve el [Assignment] creado.
+  static Future<Assignment> createAssignment(
+    String groupId,
+    Workout w, {
+    required int daysPerWeek,
+    required DateTime startAt,
+    DateTime? endAt,
+  }) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) throw StateError('Inicia sesión.');
+    final docRef = _groups.doc(groupId).collection('assignments').doc();
+    final now = DateTime.now();
+    final data = {
+      'groupId': groupId,
+      'trainerId': user.uid,
+      'workoutId': w.id,
+      'workoutTitle': w.title,
+      'exercisesSnapshot': Assignment.exerciseSnapshotFrom(w.exercises),
+      'startAt': startAt.toIso8601String(),
+      if (endAt != null) 'endAt': endAt.toIso8601String(),
+      'daysPerWeek': daysPerWeek,
+      'timezone': 'America/Santiago',
+      'status': 'active',
+      'createdAt': now.toIso8601String(),
+    };
+    await docRef.set(data);
+    return Assignment.fromMap({'id': docRef.id, ...data});
+  }
+
+  /// Devuelve la asignación activa del grupo, o null si no existe.
+  static Future<Assignment?> getActiveAssignment(String groupId) async {
+    final snap = await _groups
+        .doc(groupId)
+        .collection('assignments')
+        .where('status', isEqualTo: 'active')
+        .orderBy('createdAt', descending: true)
+        .limit(1)
+        .get();
+    if (snap.docs.isEmpty) return null;
+    final doc = snap.docs.first;
+    return Assignment.fromMap({'id': doc.id, ...doc.data()});
+  }
+
+  /// Escucha en tiempo real la asignación activa del grupo.
+  static Stream<Assignment?> watchActiveAssignment(String groupId) =>
+      _groups
+          .doc(groupId)
+          .collection('assignments')
+          .where('status', isEqualTo: 'active')
+          .orderBy('createdAt', descending: true)
+          .limit(1)
+          .snapshots()
+          .map((snap) {
+        if (snap.docs.isEmpty) return null;
+        final doc = snap.docs.first;
+        return Assignment.fromMap({'id': doc.id, ...doc.data()});
+      });
+
+  /// Elimina a un miembro del grupo.
+  static Future<void> removeMember(String groupId, String uid) =>
+      leaveGroup(groupId, uid);
 
   /// Trae los miembros del grupo con su adherencia (entrenamientos en los
   /// últimos 7 días y fecha del último).

@@ -5,9 +5,12 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
+import '../data/workouts.dart';
+import '../models/profile.dart';
 import '../models/workout.dart';
 import '../models/workout_session.dart';
 import 'account_preferences.dart';
+import 'trainer_service.dart';
 
 /// Gestiona sesiones de entrenamiento: inicio, registro de series, finalización,
 /// cancelación y recuperación tras interrupción.
@@ -136,8 +139,10 @@ class WorkoutSessionService extends ChangeNotifier {
   Future<WorkoutSession> startSession(
     Workout workout,
     String uid,
-    AccountPreferences prefs,
-  ) async {
+    AccountPreferences prefs, {
+    String? assignmentId,
+    String? groupId,
+  }) async {
     if (_active != null && _active!.status == WorkoutStatus.active) {
       if (_active!.workoutId == workout.id && _active!.uid == uid) {
         return _active!;
@@ -153,6 +158,8 @@ class WorkoutSessionService extends ChangeNotifier {
       workoutId: workout.id,
       workoutTitle: workout.title,
       startedAt: DateTime.now(),
+      assignmentId: assignmentId,
+      groupId: groupId,
       exercises: workout.exercises.asMap().entries.map((entry) {
         final e = entry.value;
         return SessionExercise(
@@ -488,6 +495,34 @@ class WorkoutSessionService extends ChangeNotifier {
       _syncState = SessionSyncState.confirmed;
       await _persistHistory(prefs);
       notifyListeners();
+
+      // Si la sesión pertenece a un grupo, registrar el completion para
+      // la adherencia del entrenador. El fallo no interrumpe la sesión.
+      if (session.groupId != null) {
+        try {
+          final Workout? w = Workouts.all
+              .where((wk) => wk.id == session.workoutId)
+              .cast<Workout?>()
+              .firstOrNull;
+          if (w != null) {
+            String userName = '';
+            try {
+              final raw = prefs.getString('brio_profile_v1') ?? '{}';
+              userName = Profile.fromJson(raw).name;
+            } catch (_) {}
+            await TrainerService.logCompletion(
+              session.groupId!,
+              session.id,
+              session.uid,
+              userName,
+              w,
+              assignmentId: session.assignmentId,
+            );
+          }
+        } catch (_) {
+          // Silencioso: el fallo del completion no afecta el estado de la sesión.
+        }
+      }
     } catch (_) {
       final i = _history.indexWhere((s) => s.id == session.id);
       if (i >= 0) {
