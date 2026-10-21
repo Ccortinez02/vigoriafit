@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:google_generative_ai/google_generative_ai.dart';
+import 'package:firebase_ai/firebase_ai.dart';
 
 import '../core/secrets.dart';
 import '../data/food_catalog.dart';
@@ -103,11 +103,26 @@ abstract class AiAdapter {
   bool get isConfigured;
 }
 
-// ── Adaptador real (Gemini) ───────────────────────────────────────────────────
+// ── Adaptador real (Firebase AI Logic) ───────────────────────────────────────
 
 class GeminiAdapter implements AiAdapter {
+  /// Firebase AI Logic siempre está configurado cuando Firebase está inicializado.
+  /// No requiere API key en el cliente: la autenticación la gestiona Firebase Auth.
   @override
-  bool get isConfigured => kUseGeminiAI;
+  bool get isConfigured => true;
+
+  GenerativeModel _chatModel(String systemPrompt) =>
+      FirebaseAI.googleAI().generativeModel(
+        model: kGeminiModel,
+        systemInstruction: Content.system(systemPrompt),
+        generationConfig: GenerationConfig(maxOutputTokens: 500, temperature: 0.7),
+      );
+
+  GenerativeModel _visionModel() =>
+      FirebaseAI.googleAI().generativeModel(
+        model: kGeminiModel,
+        generationConfig: GenerationConfig(maxOutputTokens: 400, temperature: 0.2),
+      );
 
   @override
   Future<String> chat(
@@ -117,30 +132,20 @@ class GeminiAdapter implements AiAdapter {
     String? requestId,
     Duration timeout = const Duration(seconds: 30),
   }) async {
-    if (!isConfigured) throw const AiException(AiError.noConfig);
     try {
-      final model = GenerativeModel(
-        model: kGeminiModel,
-        apiKey: kGeminiApiKey,
-        systemInstruction: Content.system(systemPrompt),
-        generationConfig: GenerationConfig(maxOutputTokens: 500, temperature: 0.7),
-      );
-
+      final model = _chatModel(systemPrompt);
       final geminiHistory = history.map((m) =>
         m.role == 'user'
           ? Content('user', [TextPart(m.text)])
           : Content.model([TextPart(m.text)]),
       ).toList();
-
       final chat = model.startChat(history: geminiHistory);
       final res = await chat.sendMessage(Content.text(userMessage)).timeout(timeout);
-      final text = res.text?.trim();
-      if (text == null || text.isEmpty) {
-        throw const AiException(AiError.invalidResponse);
-      }
       if (res.promptFeedback?.blockReason != null) {
         throw const AiException(AiError.blocked);
       }
+      final text = res.text?.trim();
+      if (text == null || text.isEmpty) throw const AiException(AiError.invalidResponse);
       return text;
     } on AiException {
       rethrow;
@@ -148,13 +153,15 @@ class GeminiAdapter implements AiAdapter {
       throw const AiException(AiError.timeout);
     } on SocketException {
       throw const AiException(AiError.noNetwork);
-    } on GenerativeAIException catch (e) {
+    } on InvalidApiKey catch (e) {
+      throw AiException(AiError.noConfig, e.toString());
+    } on FirebaseAIException catch (e) {
       final msg = e.toString().toLowerCase();
-      if (msg.contains('api_key') || msg.contains('apikey') || msg.contains('invalid key')) {
-        throw AiException(AiError.noConfig, e.toString());
-      }
       if (msg.contains('quota') || msg.contains('resource_exhausted') || msg.contains('429')) {
         throw AiException(AiError.quota, e.toString());
+      }
+      if (msg.contains('api_not_enabled') || msg.contains('service') || msg.contains('403')) {
+        throw AiException(AiError.noConfig, e.toString());
       }
       throw AiException(AiError.unknown, e.toString());
     } catch (e) {
@@ -168,7 +175,6 @@ class GeminiAdapter implements AiAdapter {
     String? requestId,
     Duration timeout = const Duration(seconds: 45),
   }) async {
-    if (!isConfigured) throw const AiException(AiError.noConfig);
     const prompt =
         'Eres un nutricionista chileno analizando una foto de comida.\n'
         'Responde SOLO con JSON válido, sin texto adicional:\n'
@@ -179,17 +185,11 @@ class GeminiAdapter implements AiAdapter {
         '- Si no puedes estimar un valor, omite el campo (no pongas null ni 0 como sustituto).\n'
         '- Si la imagen no es comida: {"items": [], "note": "No se reconoció comida en la imagen"}.\n'
         '- No incluyas texto fuera del JSON.';
-
     try {
-      final model = GenerativeModel(
-        model: kGeminiModel,
-        apiKey: kGeminiApiKey,
-        generationConfig: GenerationConfig(maxOutputTokens: 400, temperature: 0.2),
-      );
+      final model = _visionModel();
       final res = await model.generateContent([
-        Content.multi([TextPart(prompt), DataPart('image/jpeg', imageBytes)]),
+        Content.multi([TextPart(prompt), InlineDataPart('image/jpeg', imageBytes)]),
       ]).timeout(timeout);
-
       if (res.promptFeedback?.blockReason != null) {
         throw const AiException(AiError.blocked);
       }
@@ -201,13 +201,15 @@ class GeminiAdapter implements AiAdapter {
       throw const AiException(AiError.timeout);
     } on SocketException {
       throw const AiException(AiError.noNetwork);
-    } on GenerativeAIException catch (e) {
+    } on InvalidApiKey catch (e) {
+      throw AiException(AiError.noConfig, e.toString());
+    } on FirebaseAIException catch (e) {
       final msg = e.toString().toLowerCase();
-      if (msg.contains('api_key') || msg.contains('apikey') || msg.contains('invalid key')) {
-        throw AiException(AiError.noConfig, e.toString());
-      }
       if (msg.contains('quota') || msg.contains('resource_exhausted') || msg.contains('429')) {
         throw AiException(AiError.quota, e.toString());
+      }
+      if (msg.contains('api_not_enabled') || msg.contains('service') || msg.contains('403')) {
+        throw AiException(AiError.noConfig, e.toString());
       }
       throw AiException(AiError.unknown, e.toString());
     } catch (e) {

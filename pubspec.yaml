@@ -39,7 +39,8 @@ dependencies:
   intl: ^0.20.2                # fechas y formato en español
   fl_chart: ^0.69.0            # gráficos de progreso
   uuid: ^4.5.1                 # ids únicos
-  google_generative_ai: ^0.4.6 # Coach IA (Google Gemini)
+  firebase_ai: ^2.3.0           # Firebase AI Logic (Gemini sin API key en cliente)
+  firebase_app_check: ^0.3.2   # App Check para proteger el endpoint de IA
   image_picker: ^1.1.2         # cámara/galería para el escáner de comida
   flutter_local_notifications: ^18.0.1 # recordatorios (entrenar / agua)
   timezone: ^0.9.4             # zona horaria para programar recordatorios

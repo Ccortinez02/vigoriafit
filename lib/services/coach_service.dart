@@ -40,6 +40,15 @@ class CoachService {
       'Máximo 1 emoji por respuesta.';
 
   final AiAdapter _adapter;
+
+  /// Historial de la conversación actual, solo en memoria (no persiste en disco ni Firestore).
+  ///
+  /// Alcance de #228:
+  /// - Se inicia una "nueva conversación" con [clearHistory()].
+  /// - No hay persistencia entre sesiones — al salir de la app el historial se pierde.
+  /// - Al cerrar sesión ([dispose()]) se invalidan respuestas pendientes.
+  /// - En v1 no hay historial guardado: diseño intencionado para simplicidad y privacidad.
+  /// - Eliminar la cuenta no requiere acción adicional (no hay datos de conversación en Firestore).
   final List<ChatMessage> _history = [];
   String? _pendingRequestId;
   bool _disposed = false;
@@ -118,10 +127,9 @@ class CoachService {
       'Nivel: ${p.level.label}',
       'Días de entreno/semana: ${p.daysPerWeek}',
       'Equipo: ${p.hasGym ? "gimnasio" : "casa sin equipo"}',
-      if (p.conditions.isNotEmpty)
-        'Condiciones de salud: ${p.conditions.map((c) => c.label).join(", ")}',
-      if (p.allergies.isNotEmpty)
-        'Alergias: ${p.allergies.map((a) => a.label).join(", ")}',
+      // Condiciones de salud y alergias: EXCLUIDAS del contexto IA.
+      // No existe autorización acordada para enviarlos a proveedor externo.
+      // Se usan solo para filtros locales (catálogo de alimentos).
       'Racha actual: ${s.streak} días',
       'Entrenos esta semana: ${s.workoutsThisWeek}',
       'Calorías registradas hoy: ${s.foods.kcalForDay(DateTime.now()).round()} kcal',

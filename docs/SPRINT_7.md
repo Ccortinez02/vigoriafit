@@ -12,136 +12,161 @@
 
 | ID | Descripción | Estado |
 |---|---|---|
-| – | Corrección modelo: `gemini-3.5-flash-lite` → `gemini-1.5-flash` | ✅ |
+| – | Migración a Firebase AI Logic (`firebase_ai: ^2.3.0`) | ✅ |
+| – | Eliminada API key del cliente (`kGeminiApiKey` removido) | ✅ |
+| – | Modelo corregido: `gemini-2.0-flash` (estable desde feb 2025) | ✅ |
 | – | Adaptador de IA con interfaz `AiAdapter` | ✅ |
-| – | `GeminiAdapter`: cliente real `google_generative_ai ^0.4.6` | ✅ |
+| – | `GeminiAdapter`: cliente Firebase AI Logic, sin API key en binario | ✅ |
 | – | `MockAiAdapter`: respuestas predefinidas + inyección de errores | ✅ |
 | – | `CoachService`: historial (máx 10 pares), request IDs, fallback local | ✅ |
-| – | Contexto del coach: campos limitados, sin nombre/UID/email | ✅ |
-| #237 | Scanner: estado `idle→picking→analyzing→reviewing→saving` | ✅ |
+| – | Contexto del coach: sin nombre/UID/email/condiciones/alergias | ✅ |
+| #228 | Historial en memoria (v1): `clearHistory()` inicia nueva conv., `dispose()` invalida pendientes | ✅ (documentado) |
+| #237 | Scanner: estado `idle→picking→analyzing→reviewing→saving` + permisos iOS | ✅ |
 | #238 | Fase reviewing: edición de nombre, cantidad y unidad | ✅ |
 | #239 | Guardar desde reviewing con `FoodService.add()` | ✅ |
-| #211 | Idempotencia: `operationId` por ítem evita duplicados | ✅ |
+| #211 | Idempotencia: ID estable por ítem evita duplicados | ✅ |
 | #233 | Snap catálogo o `aiSource: 'AI estimate'` en `FoodRecord` | ✅ |
-| #256 | qty editada en revisión se propaga correctamente al guardar | ✅ |
+| #256 | Flujo completo: qty editada → FoodRecord → totales una sola vez | ✅ |
 | #258 | Errores diferenciados en scanner y coach con mensajes por tipo | ✅ |
-| #259 | Prompt coach incluye defensa contra jailbreak | ✅ |
-| – | Aviso de consentimiento antes de enviar foto a Gemini | ✅ |
+| #259 | Comportamiento ante jailbreak: `blocked` → mensaje de error, sin fallback | ✅ |
+| – | Aviso de consentimiento antes de enviar foto al proveedor | ✅ |
 | – | Banner de disclaimer en coach (primera vez por sesión) | ✅ |
 | – | `aiSource` en `FoodRecord` (backward compat: null = manual) | ✅ |
+| – | App Check: paquete añadido, documentado, NO activado en producción | ✅ |
+| – | `docs/APP_CHECK_SETUP.md` | ✅ |
 | – | `docs/SPRINT_7.md` | ✅ |
-| #244 | Configuración específica Android (permisos de cámara) | ⏳ Pendiente |
-| – | Integración real con API key de Gemini | ⏳ Pendiente (key vacía) |
+| #244 | Pertenece a **hidratación** (no al scanner de comida). Ver sprint correspondiente. | — |
+| – | Integración real con Gemini | ⏳ Pendiente (requiere habilitación en Firebase Console) |
 
 ## C. Arquitectura
 
 ```
 lib/
   core/
-    secrets.dart           # kGeminiApiKey (vacía), kGeminiModel ('gemini-1.5-flash')
+    secrets.dart           # kGeminiModel ('gemini-2.0-flash'); sin API key
   services/
-    ai_adapter.dart        # AiAdapter, GeminiAdapter, MockAiAdapter, FoodProposal, FoodAnalysisResult
-    coach_service.dart     # CoachService (historial, request IDs, contexto limitado)
-    coach.dart             # Intacto: answer(), generateWeekPlan(), _ruleWeekPlan() (fallback)
+    ai_adapter.dart        # AiAdapter, GeminiAdapter (firebase_ai), MockAiAdapter
+    coach_service.dart     # CoachService: historial, request IDs, contexto sin PII
+    coach.dart             # answer(), generateWeekPlan(), _ruleWeekPlan() (fallback local)
   models/
     food_record.dart       # + aiSource: String? (campo opcional)
   pages/
-    coach_page.dart        # CoachTab refactorizado con errores diferenciados
+    coach_page.dart        # Errores diferenciados, disclaimer, retry
     food_scanner_page.dart # Flujo completo reviewing + save
+docs/
+  APP_CHECK_SETUP.md       # Pasos de consola para App Check (sin gasto)
 ```
 
-**SDK**: `google_generative_ai: ^0.4.6` (instalado desde Sprint anterior)  
-**Modelo**: `gemini-1.5-flash` — soporta visión, nivel gratuito en AI Studio, estable a julio 2025  
+**SDK**: `firebase_ai: ^2.3.0` (Firebase AI Logic — Google AI backend)  
+**Modelo**: `gemini-2.0-flash` — estable desde febrero 2025, soporta texto + visión + JSON estructurado  
+**Modelos retirados**: `gemini-1.5-flash` y `gemini-1.5-pro` retirados en julio 2025  
+**Sin API key en cliente**: la autenticación la gestiona Firebase Auth; no hay secretos en el binario  
 **Historial**: máximo 10 pares (20 mensajes) enviados al modelo; el más antiguo se descarta  
-**Request IDs**: UUID v4 por mensaje; respuestas de un ID antiguo se descartan (evita condiciones de carrera)
+**Request IDs**: UUID v4 por mensaje; respuestas de un ID antiguo se descartan  
 
 ## D. Datos y privacidad
 
-**Enviado a Google Gemini cuando hay API key:**
-- Foto del plato (bytes JPEG comprimidos a 70% calidad, max 1024px ancho)
+**Enviado a Google (vía Firebase AI Logic cuando el servicio está habilitado):**
+- Foto del plato (bytes JPEG)
 - Prompt de análisis nutricional (texto en español)
 - Mensajes de chat del usuario
-- Contexto del usuario: objetivo, nivel, días/semana, equipo, condiciones de salud, alergias, racha, entrenos, kcal y agua del día
+- Contexto acotado: objetivo, nivel, días/semana, equipo, racha, entrenos semana, kcal del día, agua del día
 
-**Excluido explícitamente del contexto:**
+**Excluido explícitamente del contexto enviado al proveedor:**
 - Nombre completo del usuario
 - Correo electrónico
 - UID de Firebase Auth
+- Condiciones de salud (usadas solo en filtros locales del catálogo)
+- Alergias (usadas solo en filtros locales del catálogo)
 - Ubicación GPS
 - Historial completo de registros
-- Datos de otros usuarios
 
 **Política de fotografías:**
-- Sin API key configurada: el escáner muestra error `noConfig`, no se envía nada
-- Con API key: se muestra aviso de consentimiento antes de cada nueva foto
-- No se guardan las fotos en los servidores de VigoriaFit (solo se envían a Gemini)
-- No se procesan fotos de personas, solo de alimentos
+- Sin Firebase AI Logic habilitado: el escáner muestra error `noConfig`, no se envía nada
+- Con servicio habilitado: se muestra aviso de consentimiento antes de enviar cada foto
+- No se guardan fotos en servidores de VigoriaFit (solo se envían a Google vía Firebase)
 
 ## E. Archivos modificados / creados
 
 | Archivo | Acción |
 |---|---|
-| `lib/core/secrets.dart` | Modificado: modelo corregido |
-| `lib/models/food_record.dart` | Modificado: campo `aiSource` opcional |
-| `lib/services/ai_adapter.dart` | **Nuevo**: adaptador IA con errores tipificados |
-| `lib/services/coach_service.dart` | **Nuevo**: CoachService con contexto limitado |
-| `lib/pages/coach_page.dart` | Reescrito: errores diferenciados, disclaimer, retry |
-| `lib/pages/food_scanner_page.dart` | Reescrito: flujo reviewing completo |
-| `test/food_analysis_test.dart` | **Nuevo**: 17 tests del parseador y MockAdapter |
-| `test/coach_test.dart` | **Nuevo**: 12 tests de CoachService |
-| `docs/SPRINT_7.md` | **Nuevo**: este documento |
+| `pubspec.yaml` | `firebase_ai: ^2.3.0`, `firebase_app_check: ^0.3.2`; removido `google_generative_ai` |
+| `lib/core/secrets.dart` | Solo `kGeminiModel`; `kGeminiApiKey` eliminado; `kUseGeminiAI = true` constante |
+| `lib/models/food_record.dart` | Campo `aiSource: String?` opcional |
+| `lib/services/ai_adapter.dart` | Reescrito: usa `firebase_ai`; manejo de `FirebaseAIException` |
+| `lib/services/coach.dart` | Removidos `reply()`, `analyzeFood()`, `_askGemini*`; mantenidos `answer()`, `generateWeekPlan()`, `_ruleWeekPlan()` |
+| `lib/services/coach_service.dart` | Condiciones/alergias excluidas del contexto; docstring #228 en `_history` |
+| `lib/services/food_service.dart` | `_syncRecord()` envuelto en try-catch (robusto ante Firebase no inicializado) |
+| `lib/pages/coach_page.dart` | Errores diferenciados, disclaimer descartable, badge "Respuesta local", retry |
+| `lib/pages/food_scanner_page.dart` | Flujo reviewing: edición nombre/qty/unidad, badges, totales en tiempo real, consentimiento foto |
+| `ios/Runner/Info.plist` | `NSCameraUsageDescription`, `NSPhotoLibraryUsageDescription`, `NSPhotoLibraryAddUsageDescription` |
+| `test/food_analysis_test.dart` | Tests #256a (proporcional), #256b (FoodService integración + idempotencia), #258 |
+| `test/coach_test.dart` | Tests #259: comportamiento `blocked`, privacidad de contexto |
+| `docs/APP_CHECK_SETUP.md` | **Nuevo**: instrucciones de consola por plataforma |
+| `docs/SPRINT_7.md` | Este documento |
 
 ## F. Validaciones
 
 ```
-flutter analyze lib/       → 0 errores, 0 warnings
-flutter test               → 182/182 tests passed
+flutter analyze lib/       → 0 errores (26 info/warning preexistentes en otros archivos)
+flutter test               → 192/192 tests passed
 node --test test/firestore/access.test.cjs → 18/18 passed
 ```
 
-**Integración real con Gemini**: BLOQUEADA — `kGeminiApiKey` está vacío.  
-El código es funcional pero no se puede probar end-to-end sin una API key real.
+**Integración real con Gemini**: BLOQUEADA — requiere habilitar Firebase AI Logic en la consola  
+(ver sección H). Sin esa habilitación, `GeminiAdapter` lanzará `FirebaseAIException` en producción  
+y el coach caerá al fallback local. En tests, `MockAiAdapter` cubre todos los casos.
 
-## G. Pendientes técnicos
+## G. Estado individual de issues
 
-- **#244 Android**: agregar permisos de cámara en `android/app/src/main/AndroidManifest.xml`
-  ```xml
-  <uses-permission android:name="android.permission.CAMERA"/>
-  <uses-feature android:name="android.hardware.camera" android:required="false"/>
-  ```
-- **Integración real**: requiere API key de AI Studio (ver sección H)
-- **Persistencia de historial**: el historial de chat no se persiste entre sesiones (v1)
-- **Optimización de imágenes**: compresión JPEG actual funciona; no se implementó recorte inteligente
-- **Streaming**: las respuestas de Gemini no usan streaming (se esperan completas)
+| Issue | Estado | Evidencia |
+|---|---|---|
+| **#256** | ✅ Probado flujo completo | Test #256a: cálculo proporcional. Test #256b: `FoodService.add()` con qty editada, `kcalForDay` correcto, doble guardado no duplica |
+| **#257** | ✅ (Sprint 5) | Reglas Firestore y `WaterService.update()` ya cubrían este caso |
+| **#258** | ✅ MockAdapter con `noNetwork` lanza `AiException` | Test en `food_analysis_test.dart` |
+| **#259** | ✅ Comportamiento probado con MockAdapter | `blocked` → texto de error específico, no cae en fallback local. `noNetwork` → fallback local. Instrucción en systemPrompt verificada por test separado |
+| **#228** | ✅ Documentado alcance v1 | Docstring en `_history`; `clearHistory()` = nueva conv.; `dispose()` invalida pendientes; sin datos en Firestore |
+| **#237** | ✅ Permisos iOS añadidos | `NSCameraUsageDescription` y `NSPhotoLibraryUsageDescription` en Info.plist. Flujo `picking→analyzing→reviewing` |
+| **#244** | — | Pertenece a **hidratación**, no al scanner. No es un pendiente de este sprint. |
 
-## H. Acciones que necesita el usuario
+## H. Acciones pendientes del usuario (sin gasto)
 
-1. **Obtener API key gratuita**:  
-   Ir a [aistudio.google.com/apikey](https://aistudio.google.com/apikey) → "Create API key"  
-   (No requiere tarjeta de crédito para el nivel free)
+### 1. Habilitar Firebase AI Logic en la consola
 
-2. **Configurar la key**:  
-   Abrir `lib/core/secrets.dart` y reemplazar:
-   ```dart
-   const String kGeminiApiKey = '';
-   // por:
-   const String kGeminiApiKey = 'TU_API_KEY_AQUI';
-   ```
+1. [Firebase Console](https://console.firebase.google.com) → proyecto `vigoria-fe224`
+2. **Build → AI Logic** (o "Gemini API")
+3. **Get started** → **Google AI (Gemini Developer API)** → **Enable**
+4. El plan gratuito de Google AI **no requiere billing**. No seleccionar Vertex AI.
 
-3. **Verificar el modelo**:  
-   En AI Studio, confirmar que `gemini-1.5-flash` está disponible con esa key  
-   (Alternativa: `gemini-1.5-pro` para respuestas de mayor calidad)
+### 2. Registrar debug token de App Check (para probar con IA real en simulador)
 
-4. **Probar con datos sintéticos**:  
-   - Abrir Coach → preguntar "¿qué como hoy?" → verificar respuesta en español
-   - Abrir escáner → seleccionar foto de alimento → revisar propuestas → guardar
-   - Verificar que el registro aparece en la pestaña Nutrición
+Ver `docs/APP_CHECK_SETUP.md` — pasos completos sin gasto.
+
+### 3. Validar permisos iOS en simulador real
+
+Los permisos se declaran en `Info.plist`. Para confirmar que el diálogo aparece:
+- Ejecutar en simulador iOS (no en test headless)
+- Abrir el scanner → elegir galería o cámara → el SO debe pedir permiso
+
+### 4. Configurar permisos Android (si se usa en Android)
+
+En `android/app/src/main/AndroidManifest.xml`:
+```xml
+<uses-permission android:name="android.permission.CAMERA"/>
+<uses-feature android:name="android.hardware.camera" android:required="false"/>
+<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
+<uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
+```
+El plugin `image_picker` gestiona el permiso en runtime a partir de Android 13.
 
 ## I. Criterio de cierre
 
 El Sprint 7 está listo para pruebas de integración cuando:
-- [ ] El usuario configuró `kGeminiApiKey` con una key válida
-- [ ] El coach responde en español con el perfil del usuario
-- [ ] El escáner analiza fotos y muestra la pantalla de revisión
-- [ ] Los alimentos guardados aparecen en Nutrición con `aiSource: 'AI estimate'` cuando corresponde
-- [ ] Permisos de Android configurados (#244)
+- [ ] Firebase AI Logic habilitado en Firebase Console (Paso H.1)
+- [ ] Coach responde en español con el perfil del usuario (sin condiciones/alergias)
+- [ ] Scanner analiza fotos y muestra pantalla de revisión
+- [ ] Alimentos guardados aparecen en Nutrición con `aiSource: 'AI estimate'`
+- [ ] Doble guardado no duplica registros en Nutrición
+- [ ] Mensaje de jailbreak muestra error específico (no consejo de ejercicio)
+
+**Streaming** y **recorte inteligente de imágenes** no son criterios de aceptación de este sprint.

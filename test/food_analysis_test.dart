@@ -1,7 +1,11 @@
-import 'dart:typed_data';
-
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:vigoriafit/data/nutrition.dart';
+import 'package:vigoriafit/models/food_record.dart';
+import 'package:vigoriafit/services/account_preferences.dart';
 import 'package:vigoriafit/services/ai_adapter.dart';
+import 'package:vigoriafit/services/food_service.dart';
 
 void main() {
   FoodAnalysisResult parse(String raw) => parseAnalysisForTest(raw, 'test');
@@ -87,8 +91,8 @@ void main() {
       expect(result.proposals, isEmpty);
     });
 
-    // Test #256: qty editada se usa proporcionalmente para calcular nutrientes
-    test('#256: kcal proporcional cuando qty cambia', () {
+    // Test #256a: cálculo proporcional (lógica de UI al editar qty)
+    test('#256a: kcal proporcional cuando qty cambia (lógica de presentación)', () {
       const prop = FoodProposal(
         suggestedName: 'Pollo test',
         estimatedQty: 100,
@@ -157,6 +161,107 @@ void main() {
 
     test('isConfigured es true por defecto', () {
       expect(MockAiAdapter().isConfigured, isTrue);
+    });
+  });
+
+  // Test #256b: flujo completo corrección → FoodRecord → totales (integración)
+  // Verifica que qty editada llega al registro nutricional y afecta totales una sola vez.
+  group('#256b: flujo corrección → FoodRecord → totales (integración)', () {
+    late FoodService svc;
+    const uid = 'test_user_256';
+
+    setUp(() async {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      // Evita errores de plugin de SharedPreferences en tests headless
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        const MethodChannel('plugins.flutter.io/shared_preferences'),
+        (MethodCall call) async {
+          if (call.method == 'getAll') return <String, Object>{};
+          if (call.method == 'setStringList') return true;
+          return null;
+        },
+      );
+      SharedPreferences.setMockInitialValues({});
+      svc = FoodService();
+      final prefs = await SharedPreferences.getInstance();
+      await svc.loadForUser(AccountPreferences(prefs, uid), uid);
+    });
+
+    test('qty editada llega a FoodRecord y kcal es proporcional', () async {
+      // Propuesta original: 100g de pollo = 165 kcal
+      const originalQty = 100.0;
+      const originalKcal = 165.0;
+      // El usuario edita a 250g en la pantalla de revisión
+      const editedQty = 250.0;
+      final expectedKcal = originalKcal * editedQty / originalQty; // 412.5
+
+      final record = FoodRecord(
+        id: 'fr_test_256b',
+        uid: uid,
+        foodId: 'pollo_pechuga_cocida',
+        foodName: 'Pollo pechuga cocida',
+        refQty: originalQty,
+        kcalRef: originalKcal,
+        proteinRef: 31,
+        carbsRef: 0,
+        fatRef: 3.57,
+        refUnit: 'g',
+        quantity: editedQty,   // ← qty editada por el usuario
+        unit: 'g',
+        mealType: MealType.almuerzo,
+        consumedAt: DateTime.now(),
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+
+      await svc.add(record);
+
+      // FoodRecord.kcal usa la fórmula proporcional: kcalRef × quantity / refQty
+      expect(record.kcal, closeTo(expectedKcal, 0.1));
+
+      // kcalForDay agrega todos los registros del día
+      final total = svc.kcalForDay(DateTime.now());
+      expect(total, closeTo(expectedKcal, 0.1));
+    });
+
+    test('guardar mismo ID dos veces no duplica los totales (#256b idempotencia)', () async {
+      const editedQty = 200.0;
+      const originalKcal = 165.0;
+      const originalQty = 100.0;
+      final expectedKcal = originalKcal * editedQty / originalQty; // 330.0
+
+      final record = FoodRecord(
+        id: 'fr_test_256b_idem',
+        uid: uid,
+        foodId: 'pollo_pechuga_cocida',
+        foodName: 'Pollo pechuga cocida',
+        refQty: originalQty,
+        kcalRef: originalKcal,
+        proteinRef: 31,
+        carbsRef: 0,
+        fatRef: 3.57,
+        refUnit: 'g',
+        quantity: editedQty,
+        unit: 'g',
+        mealType: MealType.almuerzo,
+        consumedAt: DateTime.now(),
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+
+      // Primer guardado
+      await svc.add(record);
+      final firstTotal = svc.kcalForDay(DateTime.now());
+
+      // Segundo guardado con mismo ID (simula doble tap o retry)
+      await svc.add(record);
+      final secondTotal = svc.kcalForDay(DateTime.now());
+
+      // Los totales no se duplican — FoodService.add actualiza en lugar de agregar
+      expect(secondTotal, closeTo(firstTotal, 0.01),
+          reason: 'Guardar dos veces el mismo ID no debe duplicar los totales');
+      expect(secondTotal, closeTo(expectedKcal, 0.1));
     });
   });
 }

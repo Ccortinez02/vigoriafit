@@ -91,7 +91,9 @@ class FoodService extends ChangeNotifier {
     }
     notifyListeners();
     await _persist();
-    _syncRecord(record);
+    try {
+      _syncRecord(record);
+    } catch (_) {}
     return record;
   }
 

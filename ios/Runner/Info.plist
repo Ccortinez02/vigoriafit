@@ -66,5 +66,11 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>VigoriaFit necesita acceso a la cámara para analizar fotos de tus comidas.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>VigoriaFit necesita acceso a tu galería para seleccionar fotos de comidas.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>VigoriaFit puede guardar fotos de comidas en tu galería.</string>
 </dict>
 </plist>
