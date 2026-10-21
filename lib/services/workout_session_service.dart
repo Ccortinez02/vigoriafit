@@ -449,14 +449,37 @@ class WorkoutSessionService extends ChangeNotifier {
           .collection('workout_sessions')
           .doc(session.id);
       final data = _toFirestoreMap(session);
+      bool conflict = false;
       await db.runTransaction((tx) async {
         final snap = await tx.get(ref);
         if (!snap.exists) {
           tx.set(ref, data);
+          return;
         }
-        // Si el documento ya existe, fue creado correctamente en un intento
-        // anterior. No se actualiza: las sesiones son inmutables en remoto.
+        // Documento ya existe: verificar que corresponde a la misma sesión.
+        // El workoutId y startedAt son campos estables — si difieren, el documento
+        // remoto es de una sesión distinta con el mismo UUID (colisión o corrupción).
+        final remote = snap.data()!;
+        final remoteWid = remote['workoutId'] as String?;
+        final remoteTs = remote['startedAt'] as Timestamp?;
+        final localTs = Timestamp.fromDate(session.startedAt);
+        if (remoteWid != session.workoutId || remoteTs?.seconds != localTs.seconds) {
+          conflict = true;
+          return; // no sobreescribir; el llamador manejará el conflicto
+        }
+        // Contenido coherente: intento anterior ya completó la escritura.
       }).timeout(const Duration(seconds: 20));
+
+      if (conflict) {
+        // Datos remotos no corresponden a esta sesión. Conservar datos locales
+        // y marcar como failed para que el usuario pueda decidir.
+        final i = _history.indexWhere((s) => s.id == session.id);
+        if (i >= 0) _history[i].syncState = SessionSyncState.failed;
+        _syncState = SessionSyncState.failed;
+        await _persistHistory(prefs);
+        notifyListeners();
+        return;
+      }
 
       final i = _history.indexWhere((s) => s.id == session.id);
       if (i >= 0) {
