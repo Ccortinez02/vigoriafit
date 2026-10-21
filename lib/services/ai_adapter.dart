@@ -103,6 +103,37 @@ abstract class AiAdapter {
   bool get isConfigured;
 }
 
+// ── Esquema de respuesta estructurada para análisis de comida ─────────────────
+
+/// Esquema JSON que el modelo debe respetar al analizar imágenes de comida.
+/// Con responseSchema el modelo está restringido a este formato — no puede
+/// incluir texto libre fuera del JSON ni campos adicionales.
+final _foodResponseSchema = Schema.object(
+  properties: {
+    'items': Schema.array(
+      items: Schema.object(
+        properties: {
+          'name':    Schema.string(description: 'Nombre corto del alimento en español'),
+          'qty':     Schema.number(description: 'Cantidad estimada, positiva'),
+          'unit':    Schema.enumString(
+                       enumValues: ['g', 'ml', 'unidad'],
+                       description: 'Unidad de medida',
+                     ),
+          // Los nutrientes son opcionales: omitir si no hay estimación confiable.
+          'kcal':    Schema.number(description: 'Calorías estimadas'),
+          'protein': Schema.number(description: 'Proteína en gramos'),
+          'carbs':   Schema.number(description: 'Carbohidratos en gramos'),
+          'fat':     Schema.number(description: 'Grasa en gramos'),
+        },
+        // name/qty/unit son requeridos; nutrientes son opcionales.
+        optionalProperties: ['kcal', 'protein', 'carbs', 'fat'],
+      ),
+      description: 'Lista de alimentos identificados, vacía si no hay comida',
+    ),
+  },
+  // items es el único campo requerido del objeto raíz.
+);
+
 // ── Adaptador real (Firebase AI Logic) ───────────────────────────────────────
 
 class GeminiAdapter implements AiAdapter {
@@ -118,10 +149,17 @@ class GeminiAdapter implements AiAdapter {
         generationConfig: GenerationConfig(maxOutputTokens: 500, temperature: 0.7),
       );
 
+  /// Modelo de visión con salida estructurada (responseSchema).
+  /// El modelo devuelve directamente JSON válido según [_foodResponseSchema];
+  /// no puede incluir texto libre fuera del JSON.
   GenerativeModel _visionModel() =>
       FirebaseAI.googleAI().generativeModel(
         model: kGeminiModel,
-        generationConfig: GenerationConfig(maxOutputTokens: 400, temperature: 0.2),
+        generationConfig: GenerationConfig(
+          temperature: 0.2,
+          responseMimeType: 'application/json',
+          responseSchema: _foodResponseSchema,
+        ),
       );
 
   @override
@@ -160,7 +198,11 @@ class GeminiAdapter implements AiAdapter {
       if (msg.contains('quota') || msg.contains('resource_exhausted') || msg.contains('429')) {
         throw AiException(AiError.quota, e.toString());
       }
-      if (msg.contains('api_not_enabled') || msg.contains('service') || msg.contains('403')) {
+      if (msg.contains('404') || msg.contains('not found') || msg.contains('not supported')) {
+        throw AiException(AiError.noConfig, 'Modelo $kGeminiModel no disponible: ${e.toString()}');
+      }
+      if (msg.contains('api_not_enabled') || msg.contains('service') || msg.contains('403')
+          || msg.contains('app check') || msg.contains('permission')) {
         throw AiException(AiError.noConfig, e.toString());
       }
       throw AiException(AiError.unknown, e.toString());
@@ -175,16 +217,12 @@ class GeminiAdapter implements AiAdapter {
     String? requestId,
     Duration timeout = const Duration(seconds: 45),
   }) async {
+    // Prompt simplificado: el modelo está restringido al esquema JSON por responseSchema.
     const prompt =
-        'Eres un nutricionista chileno analizando una foto de comida.\n'
-        'Responde SOLO con JSON válido, sin texto adicional:\n'
-        '{"items": [{"name": "nombre corto", "qty": number, "unit": "g|ml|unidad", '
-        '"kcal": number, "protein": number, "carbs": number, "fat": number}]}\n'
-        '- Máximo 5 ítems.\n'
-        '- qty > 0, todos los números >= 0.\n'
-        '- Si no puedes estimar un valor, omite el campo (no pongas null ni 0 como sustituto).\n'
-        '- Si la imagen no es comida: {"items": [], "note": "No se reconoció comida en la imagen"}.\n'
-        '- No incluyas texto fuera del JSON.';
+        'Eres un nutricionista chileno. Analiza esta foto de comida.\n'
+        'Identifica hasta 5 alimentos visibles con sus cantidades estimadas.\n'
+        'qty debe ser positivo. Omite un campo de nutriente si no puedes estimarlo.\n'
+        'Si la imagen no contiene comida, devuelve items vacío.';
     try {
       final model = _visionModel();
       final res = await model.generateContent([
@@ -208,7 +246,12 @@ class GeminiAdapter implements AiAdapter {
       if (msg.contains('quota') || msg.contains('resource_exhausted') || msg.contains('429')) {
         throw AiException(AiError.quota, e.toString());
       }
-      if (msg.contains('api_not_enabled') || msg.contains('service') || msg.contains('403')) {
+      // Modelo no disponible: 404, model_not_found, model not supported.
+      if (msg.contains('404') || msg.contains('not found') || msg.contains('not supported')) {
+        throw AiException(AiError.noConfig, 'Modelo $kGeminiModel no disponible: ${e.toString()}');
+      }
+      if (msg.contains('api_not_enabled') || msg.contains('service') || msg.contains('403')
+          || msg.contains('app check') || msg.contains('permission')) {
         throw AiException(AiError.noConfig, e.toString());
       }
       throw AiException(AiError.unknown, e.toString());

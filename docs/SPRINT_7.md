@@ -14,7 +14,7 @@
 |---|---|---|
 | – | Migración a Firebase AI Logic (`firebase_ai: ^2.3.0`) | ✅ |
 | – | Eliminada API key del cliente (`kGeminiApiKey` removido) | ✅ |
-| – | Modelo corregido: `gemini-2.0-flash` (estable desde feb 2025) | ✅ |
+| – | Modelo actualizado a `gemini-3.8-flash` (estable, último Gemini 3.x Flash) | ✅ |
 | – | Adaptador de IA con interfaz `AiAdapter` | ✅ |
 | – | `GeminiAdapter`: cliente Firebase AI Logic, sin API key en binario | ✅ |
 | – | `MockAiAdapter`: respuestas predefinidas + inyección de errores | ✅ |
@@ -43,7 +43,7 @@
 ```
 lib/
   core/
-    secrets.dart           # kGeminiModel ('gemini-2.0-flash'); sin API key
+    secrets.dart           # kGeminiModel ('gemini-3.8-flash'); sin API key
   services/
     ai_adapter.dart        # AiAdapter, GeminiAdapter (firebase_ai), MockAiAdapter
     coach_service.dart     # CoachService: historial, request IDs, contexto sin PII
@@ -58,8 +58,8 @@ docs/
 ```
 
 **SDK**: `firebase_ai: ^2.3.0` (Firebase AI Logic — Google AI backend)  
-**Modelo**: `gemini-2.0-flash` — estable desde febrero 2025, soporta texto + visión + JSON estructurado  
-**Modelos retirados**: `gemini-1.5-flash` y `gemini-1.5-pro` retirados en julio 2025  
+**Modelo**: `gemini-3.8-flash` — estable, último Gemini 3.x Flash, soporta texto + visión + salida estructurada (responseSchema)  
+**Modelos retirados**: `gemini-1.5-flash` y `gemini-1.5-pro` (jul-2025), `gemini-2.0-flash` (jun-2026). Ver https://firebase.google.com/docs/ai-logic/models  
 **Sin API key en cliente**: la autenticación la gestiona Firebase Auth; no hay secretos en el binario  
 **Historial**: máximo 10 pares (20 mensajes) enviados al modelo; el más antiguo se descarta  
 **Request IDs**: UUID v4 por mensaje; respuestas de un ID antiguo se descartan  
@@ -161,12 +161,25 @@ El plugin `image_picker` gestiona el permiso en runtime a partir de Android 13.
 
 ## I. Criterio de cierre
 
-El Sprint 7 está listo para pruebas de integración cuando:
-- [ ] Firebase AI Logic habilitado en Firebase Console (Paso H.1)
-- [ ] Coach responde en español con el perfil del usuario (sin condiciones/alergias)
-- [ ] Scanner analiza fotos y muestra pantalla de revisión
+**INTEGRACIÓN REAL NO VALIDADA** — pendiente de habilitar Firebase AI Logic en consola y ejecutar
+solicitudes contra el modelo `gemini-3.8-flash` con datos sintéticos. No declarar integración válida
+hasta ejecutar correctamente:
+
+- [ ] Firebase AI Logic habilitado en Firebase Console → Google AI → `gemini-3.8-flash` (Paso H.1)
+- [ ] Consulta de texto al coach con perfil sintético → respuesta en español
+- [ ] Foto de alimento sintética → JSON con `items` validado por `_parseAnalysis`
+- [ ] Respuesta estructurada del análisis coincide con el `_foodResponseSchema` declarado
+- [ ] Coach responde sin incluir condiciones de salud ni alergias (verificado por test de privacidad)
+- [ ] Scanner muestra pantalla de revisión con alimentos editables antes de guardar
 - [ ] Alimentos guardados aparecen en Nutrición con `aiSource: 'AI estimate'`
 - [ ] Doble guardado no duplica registros en Nutrición
-- [ ] Mensaje de jailbreak muestra error específico (no consejo de ejercicio)
+- [ ] Mensaje de jailbreak devuelve error `blocked` → texto específico (sin consejo local)
+
+**Si falla al conectar:** distinguir el error con `AiError`:
+- `noConfig` → Firebase AI Logic no habilitado, App Check bloqueando, o modelo no disponible
+- `quota` → límite gratuito alcanzado
+- `noNetwork` → sin conexión
+- `blocked` → imagen o mensaje rechazado por filtro de contenido
+- `invalidResponse` → JSON fuera del esquema esperado
 
 **Streaming** y **recorte inteligente de imágenes** no son criterios de aceptación de este sprint.
