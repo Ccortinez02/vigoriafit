@@ -50,25 +50,26 @@ ninguna API key en el cliente.
 
 ## Paso 2: Activar App Check en el código
 
-En `lib/main.dart`, antes de `runApp()`:
+**✅ Ya implementado en `lib/main.dart`** (desde sprint7, commit actual).
+
+La inicialización ocurre después de `Firebase.initializeApp()` y antes de cualquier
+llamada a Firebase AI Logic:
 
 ```dart
-import 'package:firebase_app_check/firebase_app_check.dart';
-import 'package:flutter/foundation.dart';
-
-// En initApp(), después de Firebase.initializeApp():
+// lib/main.dart — ya presente
 await FirebaseAppCheck.instance.activate(
-  androidProvider: kDebugMode
-      ? AndroidProvider.debug
-      : AndroidProvider.playIntegrity,
-  appleProvider: kDebugMode
-      ? AppleProvider.debug
-      : AppleProvider.appAttest,
+  androidProvider: kDebugMode ? AndroidProvider.debug : AndroidProvider.playIntegrity,
+  appleProvider: kDebugMode ? AppleProvider.debug : AppleProvider.appAttest,
 );
 ```
 
-> **Importante**: Registra el debug token del simulador ANTES de activar, o las
-> llamadas al coach y al scanner fallarán con `permission-denied`.
+En `kDebugMode` (simulador/emulador/debug build): ambos proveedores en modo debug —
+requieren token registrado en la consola (Paso 1).
+En release: App Attest (iOS) / Play Integrity (Android).
+
+> **Importante**: Registra el debug token del simulador ANTES de activar enforce,
+> o las llamadas al coach y al scanner fallarán con `permission-denied`.
+> Sin enforce activo, las llamadas funcionan aunque el token no esté registrado.
 
 ---
 

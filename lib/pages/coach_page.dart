@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 
-import '../core/secrets.dart';
+import '../core/ai_config.dart';
 import '../core/theme.dart';
 import '../services/ai_adapter.dart';
 import '../services/coach_service.dart';

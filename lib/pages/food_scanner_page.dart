@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 
-import '../core/secrets.dart';
+import '../core/ai_config.dart';
 import '../core/theme.dart';
 import '../data/food_catalog.dart';
 import '../data/nutrition.dart';

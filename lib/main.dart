@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -23,6 +25,15 @@ void main() async {
   try {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
+    );
+    // App Check: protege Firebase AI Logic contra uso no autorizado.
+    // En simulador/debug → proveedor debug (requiere token registrado en consola).
+    // En dispositivo real → App Attest (iOS) / Play Integrity (Android).
+    // Sin App Check enforced en consola, las llamadas funcionan igual;
+    // el enforce se activa desde Firebase Console cuando App Check esté validado.
+    await FirebaseAppCheck.instance.activate(
+      androidProvider: kDebugMode ? AndroidProvider.debug : AndroidProvider.playIntegrity,
+      appleProvider: kDebugMode ? AppleProvider.debug : AppleProvider.appAttest,
     );
     if (_useEmulator) {
       await FirebaseAuth.instance.useAuthEmulator('localhost', 9099);

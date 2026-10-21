@@ -5,7 +5,7 @@ import 'dart:typed_data';
 
 import 'package:firebase_ai/firebase_ai.dart';
 
-import '../core/secrets.dart';
+import '../core/ai_config.dart';
 import '../data/food_catalog.dart';
 
 /// Tipos de error del servicio de IA.
