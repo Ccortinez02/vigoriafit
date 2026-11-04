@@ -22,4 +22,13 @@ class AccountPreferences {
   Future<bool> setStringList(String key, List<String> value) =>
       storage.setStringList(_key(key), value);
   Future<bool> remove(String key) => storage.remove(_key(key));
+
+  /// Elimina todas las claves de SharedPreferences que pertenecen a este usuario.
+  Future<void> clearAll() async {
+    final prefix = 'vigoria_v2_${Uri.encodeComponent(uid)}_';
+    final keys = storage.getKeys().where((k) => k.startsWith(prefix)).toList();
+    for (final k in keys) {
+      await storage.remove(k);
+    }
+  }
 }

@@ -24,10 +24,7 @@ class DefaultFirebaseOptions {
     }
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for android - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
+        return android;
       case TargetPlatform.iOS:
         return ios;
       case TargetPlatform.macOS:
@@ -51,6 +48,14 @@ class DefaultFirebaseOptions {
         );
     }
   }
+
+  static const FirebaseOptions android = FirebaseOptions(
+    apiKey: 'AIzaSyCAXdocyO30Cr5ITlEA-T7xay2DPAy3RtY',
+    appId: '1:1092988210930:android:3cea818f005aecff8e4a6b',
+    messagingSenderId: '1092988210930',
+    projectId: 'vigoria-fe224',
+    storageBucket: 'vigoria-fe224.firebasestorage.app',
+  );
 
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyDI6xRm2BqG6vqyDto97BWZTga90a8caJg',

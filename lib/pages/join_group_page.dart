@@ -447,8 +447,9 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
     }
 
     try {
+      final snapshotWorkout = a.workoutFromSnapshot(workout);
       await s.sessions.startSession(
-        workout,
+        snapshotWorkout,
         uid,
         prefs,
         assignmentId: a.id,

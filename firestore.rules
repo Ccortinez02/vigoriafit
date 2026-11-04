@@ -181,8 +181,7 @@ service cloud.firestore {
           && request.resource.data.groupId == gid
           && request.resource.data.trainerId == request.auth.uid
           && request.resource.data.status == 'active'
-          && request.resource.data.createdAt == request.time
-          && request.resource.data.startAt == request.time;
+          && request.resource.data.createdAt == request.time;
         allow update: if groupOwner(gid)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
           && (request.resource.data.status == 'active' || request.resource.data.status == 'inactive');

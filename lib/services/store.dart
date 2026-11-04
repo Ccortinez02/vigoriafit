@@ -888,37 +888,62 @@ class AppStore extends ChangeNotifier {
     final uid = user.uid;
     final db = FirebaseFirestore.instance;
 
-    // Borra colecciones de datos del usuario en lotes (máx. 500 ops por batch).
-    final foodSnap = await db
-        .collection('users')
-        .doc(uid)
-        .collection('food_records')
-        .get();
-    final waterSnap = await db
-        .collection('users')
-        .doc(uid)
-        .collection('water_records')
-        .get();
-    final sessionsSnap = await db
-        .collection('users')
-        .doc(uid)
-        .collection('workout_sessions')
-        .get();
+    // 1. Salir del grupo si el usuario es miembro.
+    if (_groupId != null) {
+      try {
+        await db
+            .collection('groups')
+            .doc(_groupId)
+            .collection('members')
+            .doc(uid)
+            .delete();
+      } catch (_) {
+        // El grupo puede no existir o ya se pudo haber salido.
+      }
+    }
 
-    final batch = db.batch();
-    for (final doc in foodSnap.docs) { batch.delete(doc.reference); }
-    for (final doc in waterSnap.docs) { batch.delete(doc.reference); }
-    for (final doc in sessionsSnap.docs) { batch.delete(doc.reference); }
-    batch.delete(
+    // 2. Borrar colecciones privadas en lotes de máx. 400 ops (límite Firestore: 500).
+    for (final coll in ['food_records', 'water_records', 'workout_sessions']) {
+      var snap = await db
+          .collection('users')
+          .doc(uid)
+          .collection(coll)
+          .limit(400)
+          .get();
+      while (snap.docs.isNotEmpty) {
+        final batch = db.batch();
+        for (final doc in snap.docs) {
+          batch.delete(doc.reference);
+        }
+        await batch.commit();
+        if (snap.docs.length < 400) break;
+        snap = await db
+            .collection('users')
+            .doc(uid)
+            .collection(coll)
+            .limit(400)
+            .get();
+      }
+    }
+
+    // 3. Borrar docs privados y el doc raíz del usuario.
+    final rootBatch = db.batch();
+    rootBatch.delete(
       db.collection('users').doc(uid).collection('private').doc('health_profile'),
     );
-    batch.delete(db.collection('users').doc(uid));
-    await batch.commit();
+    rootBatch.delete(db.collection('users').doc(uid));
+    await rootBatch.commit();
 
-    // Elimina la cuenta de Firebase Auth.
+    // 4. Limpiar SharedPreferences antes de eliminar Auth para evitar que
+    //    escrituras pendientes en caché recreen datos.
+    final p = _accountPrefs;
+    if (p != null) await p.clearAll();
+
+    // 5. Eliminar la cuenta de Firebase Auth.
     await user.delete();
 
-    // Cierra la sesión local (limpia SharedPreferences y estado en memoria).
-    await logout();
+    // 6. Limpiar estado en memoria. No se llama _auth.signOut() porque la
+    //    cuenta ya no existe; solo se reinicia el estado local.
+    await _acceptSession(null);
   }
 }

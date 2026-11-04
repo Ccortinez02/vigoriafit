@@ -459,7 +459,7 @@ class _TrainerPageState extends State<TrainerPage> {
         : DateTime.now().difference(m.lastWorkoutAt!).inDays;
     final warn = daysSince != null && daysSince >= 5;
     final adherencePct = daysPerWeek > 0
-        ? (m.workoutsThisWeek / daysPerWeek * 100).clamp(0, 100).round()
+        ? (m.trainingDaysThisWeek / daysPerWeek * 100).clamp(0, 100).round()
         : null;
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -505,8 +505,8 @@ class _TrainerPageState extends State<TrainerPage> {
                   noActivity
                       ? 'Sin entrenamientos registrados aún'
                       : adherencePct != null
-                          ? '$adherencePct% esta semana (${m.workoutsThisWeek} de $daysPerWeek días) · último hace $daysSince días'
-                          : '${m.workoutsThisWeek} esta semana · último hace $daysSince días',
+                          ? '$adherencePct% esta semana (${m.trainingDaysThisWeek} de $daysPerWeek días) · último hace $daysSince días'
+                          : '${m.trainingDaysThisWeek} esta semana · último hace $daysSince días',
                   style: TextStyle(
                     fontSize: 12,
                     color: (warn || noActivity)

@@ -27,6 +27,7 @@ class _SettingsPageState extends State<SettingsPage> {
   late final Profile _p;
   late final TextEditingController _name;
   bool _saving = false;
+  bool _deleting = false;
   SyncState _syncState = SyncState.idle;
 
   @override
@@ -396,43 +397,84 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _deleteAccountFlow(BuildContext context) async {
-    final passwordCtrl = TextEditingController();
-    bool obscure = true;
+    if (_deleting) return;
 
-    final confirmed = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setState) => AlertDialog(
-          title: const Text('¿Eliminar cuenta?'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Esta acción eliminará permanentemente tu cuenta y todos tus datos. '
-                'No se puede deshacer.',
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'Ingresa tu contraseña para confirmar:',
-                style: TextStyle(fontSize: 13),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: passwordCtrl,
-                obscureText: obscure,
-                decoration: InputDecoration(
-                  hintText: 'Contraseña',
-                  suffixIcon: IconButton(
-                    icon: Icon(
-                      obscure ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    final providers = user.providerData.map((p) => p.providerId).toList();
+    final isGoogle = providers.contains('google.com');
+    final isEmail = providers.contains('password');
+
+    // Paso 1: confirmación + recolección de datos según proveedor
+    String? password;
+    if (isEmail) {
+      final passwordCtrl = TextEditingController();
+      bool obscure = true;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => StatefulBuilder(
+          builder: (ctx, setState) => AlertDialog(
+            title: const Text('¿Eliminar cuenta?'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Esta acción eliminará permanentemente tu cuenta y todos tus datos. '
+                  'No se puede deshacer.',
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Ingresa tu contraseña para confirmar:',
+                  style: TextStyle(fontSize: 13),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: passwordCtrl,
+                  obscureText: obscure,
+                  decoration: InputDecoration(
+                    hintText: 'Contraseña',
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        obscure
+                            ? Icons.visibility_off_rounded
+                            : Icons.visibility_rounded,
+                      ),
+                      onPressed: () => setState(() => obscure = !obscure),
                     ),
-                    onPressed: () => setState(() => obscure = !obscure),
                   ),
                 ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+                child: const Text('Eliminar cuenta'),
               ),
             ],
+          ),
+        ),
+      );
+      if (confirmed != true || !context.mounted) return;
+      password = passwordCtrl.text.trim();
+      if (password.isEmpty) return;
+    } else if (isGoogle) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          title: const Text('¿Eliminar cuenta?'),
+          content: const Text(
+            'Esta acción eliminará permanentemente tu cuenta y todos tus datos. '
+            'No se puede deshacer.\n\n'
+            'Se te pedirá confirmar con tu cuenta de Google.',
           ),
           actions: [
             TextButton(
@@ -442,38 +484,47 @@ class _SettingsPageState extends State<SettingsPage> {
             FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
               style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
-              child: const Text('Eliminar cuenta'),
+              child: const Text('Continuar'),
             ),
           ],
         ),
-      ),
-    );
+      );
+      if (confirmed != true || !context.mounted) return;
+    } else {
+      return; // proveedor no soportado
+    }
 
-    if (confirmed != true || !context.mounted) return;
+    setState(() => _deleting = true);
 
-    final password = passwordCtrl.text.trim();
-    if (password.isEmpty) return;
-
-    // Reautenticación con credenciales de email/contraseña.
+    // Paso 2: reautenticación
     try {
-      final email = AppStore.instance.currentEmail;
-      if (email == null) return;
-      final credential = EmailAuthProvider.credential(email: email, password: password);
-      await FirebaseAuth.instance.currentUser?.reauthenticateWithCredential(credential);
+      if (isEmail) {
+        final email = AppStore.instance.currentEmail;
+        if (email == null) return;
+        final credential =
+            EmailAuthProvider.credential(email: email, password: password!);
+        await user.reauthenticateWithCredential(credential);
+      } else if (isGoogle) {
+        await user.reauthenticateWithProvider(GoogleAuthProvider());
+      }
     } catch (_) {
+      setState(() => _deleting = false);
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Contraseña incorrecta. No se eliminó la cuenta.')),
+        const SnackBar(
+            content:
+                Text('La verificación falló. No se eliminó la cuenta.')),
       );
       return;
     }
 
-    // Borrado de datos
+    // Paso 3: borrado de datos
     try {
       await AppStore.instance.deleteAccount();
       if (!context.mounted) return;
       Navigator.of(context).popUntil((r) => r.isFirst);
     } catch (e) {
+      setState(() => _deleting = false);
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error al eliminar la cuenta: $e')),
