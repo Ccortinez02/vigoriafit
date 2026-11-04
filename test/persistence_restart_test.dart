@@ -5,6 +5,7 @@
 /// relanza la app). Las pruebas usan adaptadores falsos, no el SDK de Firebase.
 ///
 /// No ejecutar contra producción.
+library;
 import 'dart:async';
 
 import 'package:flutter/material.dart';

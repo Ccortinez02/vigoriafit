@@ -68,8 +68,9 @@ class _OnboardingPageState extends State<OnboardingPage> {
   Future<void> _finish() async {
     if (_saving) return;
     _profile.name = _name.text.trim();
-    if (_profile.targetWeightKg == 0)
+    if (_profile.targetWeightKg == 0) {
       _profile.targetWeightKg = _profile.weightKg;
+    }
     setState(() {
       _saving = true;
       _saveError = null;
@@ -402,7 +403,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
           value: _profile.hasGym,
-          activeColor: AppColors.brand,
+          activeThumbColor: AppColors.brand,
           title: Text(
             'Tengo acceso a gimnasio',
             style: TextStyle(fontWeight: FontWeight.w600, color: AppColors.ink),

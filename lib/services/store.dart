@@ -154,8 +154,9 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> _acceptSession(AccountIdentity? user, {bool force = false}) {
-    if (!force && _sessionInitialized && user?.uid == _account?.uid)
+    if (!force && _sessionInitialized && user?.uid == _account?.uid) {
       return _transition;
+    }
     _sessionInitialized = true;
     final epoch = ++_epoch;
     _saveGeneration = 0;

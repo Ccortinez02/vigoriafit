@@ -202,7 +202,7 @@ class _NutritionTabState extends State<NutritionTab> {
     required double kcal, required double prot,
     required double carbs, required double fat, required int goal,
   }) {
-    final fmtD = (double v) => v.toStringAsFixed(1);
+    String fmtD(double v) => v.toStringAsFixed(1);
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -977,7 +977,7 @@ class _FoodLogSheetState extends State<_FoodLogSheet> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: DropdownButtonFormField<MealType>(
-                      value: _mealType,
+                      initialValue: _mealType,
                       decoration: const InputDecoration(labelText: 'Momento'),
                       items: MealType.values.map((t) => DropdownMenuItem(
                         value: t,

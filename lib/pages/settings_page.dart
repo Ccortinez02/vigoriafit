@@ -159,7 +159,7 @@ class _SettingsPageState extends State<SettingsPage> {
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             value: _p.hasGym,
-            activeColor: AppColors.brand,
+            activeThumbColor: AppColors.brand,
             title: Text(
               'Tengo acceso a gimnasio',
               style: TextStyle(
@@ -405,7 +405,7 @@ class _SettingsPageState extends State<SettingsPage> {
               child: SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 value: s.workoutReminderOn,
-                activeColor: AppColors.brand,
+                activeThumbColor: AppColors.brand,
                 title: Text(
                   'Recordar entrenar',
                   style: TextStyle(
@@ -471,7 +471,7 @@ class _SettingsPageState extends State<SettingsPage> {
               child: SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 value: s.waterReminderOn,
-                activeColor: AppColors.brand,
+                activeThumbColor: AppColors.brand,
                 title: Text(
                   'Recordar tomar agua',
                   style: TextStyle(
@@ -522,7 +522,7 @@ class _SettingsPageState extends State<SettingsPage> {
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               value: s.isTrainer,
-              activeColor: AppColors.brand,
+              activeThumbColor: AppColors.brand,
               title: Text(
                 'Soy entrenador',
                 style: TextStyle(

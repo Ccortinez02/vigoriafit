@@ -152,7 +152,7 @@ class _WorkoutHistoryPageState extends State<WorkoutHistoryPage> {
                     : ListView.separated(
                         padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
                         itemCount: sessions.length,
-                        separatorBuilder: (_, __) => const SizedBox(height: 10),
+                        separatorBuilder: (_, _) => const SizedBox(height: 10),
                         itemBuilder: (ctx, i) => _SessionCard(
                           session: sessions[i],
                           onTap: () => Navigator.of(context).push(

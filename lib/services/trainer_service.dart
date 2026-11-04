@@ -69,8 +69,9 @@ class TrainerService {
     String userId,
     String userName,
   ) async {
-    if (FirebaseAuth.instance.currentUser?.uid != userId)
+    if (FirebaseAuth.instance.currentUser?.uid != userId) {
       throw StateError('Sesión inválida.');
+    }
     final invite = await _db.collection('groupInvites').doc(code.trim()).get();
     if (!invite.exists) return null;
     final groupId = invite.data()!['groupId'] as String;
@@ -132,7 +133,7 @@ class TrainerService {
         'workoutId': w.id,
         'workoutTitle': w.title,
         'completedAt': FieldValue.serverTimestamp(),
-        if (assignmentId != null) 'assignmentId': assignmentId,
+        'assignmentId': ?assignmentId,
       });
     });
   }

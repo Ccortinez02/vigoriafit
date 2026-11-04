@@ -53,18 +53,18 @@ Future<Map<String, dynamic>?> _firestoreGet(String path) async {
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  bool _firebaseReady = false;
+  bool firebaseReady = false;
 
   setUpAll(() async {
     WidgetsFlutterBinding.ensureInitialized();
-    if (!_firebaseReady) {
+    if (!firebaseReady) {
       await Firebase.initializeApp(
         options: DefaultFirebaseOptions.currentPlatform,
       );
       // Enrutamiento al emulador (igual que main.dart con --dart-define=USE_EMULATOR=true)
       await FirebaseAuth.instance.useAuthEmulator('localhost', 9099);
       FirebaseFirestore.instance.useFirestoreEmulator('localhost', 8080);
-      _firebaseReady = true;
+      firebaseReady = true;
     }
     await _clearEmulator();
   });

@@ -92,11 +92,13 @@ class _FoodScannerPageState extends State<FoodScannerPage> {
 
   List<_EditableProposal> _proposals = [];
   MealType _mealType = MealType.almuerzo;
-  DateTime _consumedAt = DateTime.now();
+  final DateTime _consumedAt = DateTime.now();
 
   @override
   void dispose() {
-    for (final p in _proposals) p.dispose();
+    for (final p in _proposals) {
+      p.dispose();
+    }
     super.dispose();
   }
 
@@ -110,7 +112,9 @@ class _FoodScannerPageState extends State<FoodScannerPage> {
         _lastError = null;
         _consentShown = false;
         _state = _ScanState.picking;
-        for (final p in _proposals) p.dispose();
+        for (final p in _proposals) {
+          p.dispose();
+        }
         _proposals = [];
       });
     } catch (_) {
@@ -540,7 +544,9 @@ class _FoodScannerPageState extends State<FoodScannerPage> {
                     _lastError = null;
                     _bytes = null;
                     _consentShown = false;
-                    for (final p in _proposals) p.dispose();
+                    for (final p in _proposals) {
+                      p.dispose();
+                    }
                     _proposals = [];
                   }),
                   child: const Text('Cancelar'),
