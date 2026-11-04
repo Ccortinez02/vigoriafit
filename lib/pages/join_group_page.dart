@@ -368,7 +368,11 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
                   child: OutlinedButton(
                     onPressed: () => Navigator.of(context).push(
                       MaterialPageRoute(
-                        builder: (_) => WorkoutDetailPage(workout: workout),
+                        builder: (_) => WorkoutDetailPage(
+                          // Usa exercisesSnapshot para mostrar los ejercicios
+                          // tal como fueron asignados, no la versión actual del catálogo.
+                          workout: a.workoutFromSnapshot(workout),
+                        ),
                       ),
                     ),
                     style: OutlinedButton.styleFrom(

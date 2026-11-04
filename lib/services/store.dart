@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -873,5 +875,50 @@ class AppStore extends ChangeNotifier {
       (p) => p.setStringList(_kAchievements, _notifiedAchievements.toList()),
     );
     return newOnes;
+  }
+
+  // ── Eliminación de cuenta (#270) ──────────────────────────────────────────
+
+  /// Borra todos los datos del usuario en Firestore y elimina la cuenta de Auth.
+  /// El cliente DEBE haber completado la reautenticación antes de llamar aquí.
+  /// Después de este método la sesión queda cerrada y el estado se reinicia.
+  Future<void> deleteAccount() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) throw StateError('No hay sesión activa.');
+    final uid = user.uid;
+    final db = FirebaseFirestore.instance;
+
+    // Borra colecciones de datos del usuario en lotes (máx. 500 ops por batch).
+    final foodSnap = await db
+        .collection('users')
+        .doc(uid)
+        .collection('food_records')
+        .get();
+    final waterSnap = await db
+        .collection('users')
+        .doc(uid)
+        .collection('water_records')
+        .get();
+    final sessionsSnap = await db
+        .collection('users')
+        .doc(uid)
+        .collection('workout_sessions')
+        .get();
+
+    final batch = db.batch();
+    for (final doc in foodSnap.docs) { batch.delete(doc.reference); }
+    for (final doc in waterSnap.docs) { batch.delete(doc.reference); }
+    for (final doc in sessionsSnap.docs) { batch.delete(doc.reference); }
+    batch.delete(
+      db.collection('users').doc(uid).collection('private').doc('health_profile'),
+    );
+    batch.delete(db.collection('users').doc(uid));
+    await batch.commit();
+
+    // Elimina la cuenta de Firebase Auth.
+    await user.delete();
+
+    // Cierra la sesión local (limpia SharedPreferences y estado en memoria).
+    await logout();
   }
 }

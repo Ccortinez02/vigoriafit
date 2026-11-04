@@ -39,19 +39,21 @@ service cloud.firestore {
     }
     match /users/{uid} {
       allow get: if owner(uid);
-      allow list, delete: if false;
+      allow list: if false;
+      allow delete: if owner(uid);
       allow create: if owner(uid) && validBasic(request.resource.data) && request.resource.data.createdAt == request.time;
       allow update: if owner(uid) && validBasic(request.resource.data)
         && request.resource.data.createdAt == resource.data.createdAt;
       match /private/{id} {
         allow get: if owner(uid) && id == 'health_profile';
-        allow list, delete: if false;
+        allow list: if false;
+        allow delete: if owner(uid) && id == 'health_profile';
         allow create, update: if owner(uid) && id == 'health_profile'
           && existsAfter(/databases/$(database)/documents/users/$(uid)) && validHealth(request.resource.data);
       }
       function validFoodRecord(d) {
         return d.keys().hasAll(['id','uid','foodId','foodName','refQty','refUnit','kcalRef','proteinRef','carbsRef','fatRef','qty','unit','meal','consumedAt','createdAt','updatedAt'])
-          && d.keys().hasOnly(['id','uid','foodId','foodName','refQty','refUnit','kcalRef','proteinRef','carbsRef','fatRef','qty','unit','meal','consumedAt','createdAt','updatedAt'])
+          && d.keys().hasOnly(['id','uid','foodId','foodName','refQty','refUnit','kcalRef','proteinRef','carbsRef','fatRef','qty','unit','meal','consumedAt','createdAt','updatedAt','aiSource'])
           && text(d.id,128) && d.uid == uid
           && text(d.foodId,128) && text(d.foodName,200)
           && d.refQty is number && d.refQty > 0
@@ -96,7 +98,7 @@ service cloud.firestore {
       }
       match /workout_sessions/{sessionId} {
         allow get, list: if owner(uid);
-        allow delete: if false;
+        allow delete: if owner(uid);
         // Crear: solo el propietario, con datos válidos, solo sesiones finalizadas.
         // El sessionId (UUID) se genera en cliente y no puede reutilizarse.
         allow create: if owner(uid) && validSession(request.resource.data)

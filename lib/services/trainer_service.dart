@@ -150,21 +150,60 @@ class TrainerService {
     if (user == null) throw StateError('Inicia sesión.');
     final docRef = _groups.doc(groupId).collection('assignments').doc();
     final now = DateTime.now();
+    final exercisesSnapshot = Assignment.exerciseSnapshotFrom(w.exercises);
+    // startAt y createdAt deben ser Timestamp para pasar la validación de reglas.
+    // La regla exige createdAt == request.time, por eso usamos serverTimestamp.
+    // startAt se fija en el momento de asignación (siempre DateTime.now()).
     final data = {
       'groupId': groupId,
       'trainerId': user.uid,
       'workoutId': w.id,
       'workoutTitle': w.title,
-      'exercisesSnapshot': Assignment.exerciseSnapshotFrom(w.exercises),
-      'startAt': startAt.toIso8601String(),
-      if (endAt != null) 'endAt': endAt.toIso8601String(),
+      'exercisesSnapshot': exercisesSnapshot,
+      'startAt': FieldValue.serverTimestamp(),
+      if (endAt != null) 'endAt': Timestamp.fromDate(endAt),
       'daysPerWeek': daysPerWeek,
       'timezone': 'America/Santiago',
       'status': 'active',
-      'createdAt': now.toIso8601String(),
+      'createdAt': FieldValue.serverTimestamp(),
     };
     await docRef.set(data);
-    return Assignment.fromMap({'id': docRef.id, ...data});
+    // Construimos el Assignment localmente con DateTime.now() como aproximación;
+    // el valor real del servidor difiere solo en milisegundos.
+    return Assignment(
+      id: docRef.id,
+      groupId: groupId,
+      trainerId: user.uid,
+      workoutId: w.id,
+      workoutTitle: w.title,
+      exercisesSnapshot: exercisesSnapshot,
+      startAt: startAt,
+      endAt: endAt,
+      daysPerWeek: daysPerWeek,
+      timezone: 'America/Santiago',
+      status: 'active',
+      createdAt: now,
+    );
+  }
+
+  /// Convierte un valor de Firestore (Timestamp o String ISO) a DateTime.
+  static DateTime _dateFromFirestore(dynamic v) {
+    if (v is Timestamp) return v.toDate();
+    return DateTime.parse(v as String);
+  }
+
+  /// Normaliza los campos de fecha en datos leídos de Firestore antes de
+  /// pasarlos a Assignment.fromMap (que espera strings ISO).
+  static Map<String, dynamic> _normalizeAssignmentData(Map<String, dynamic> data) {
+    return {
+      ...data,
+      if (data['startAt'] != null)
+        'startAt': _dateFromFirestore(data['startAt']).toIso8601String(),
+      if (data['endAt'] != null)
+        'endAt': _dateFromFirestore(data['endAt']).toIso8601String(),
+      if (data['createdAt'] != null)
+        'createdAt': _dateFromFirestore(data['createdAt']).toIso8601String(),
+    };
   }
 
   /// Devuelve la asignación activa del grupo, o null si no existe.
@@ -178,7 +217,7 @@ class TrainerService {
         .get();
     if (snap.docs.isEmpty) return null;
     final doc = snap.docs.first;
-    return Assignment.fromMap({'id': doc.id, ...doc.data()});
+    return Assignment.fromMap(_normalizeAssignmentData({'id': doc.id, ...doc.data()}));
   }
 
   /// Escucha en tiempo real la asignación activa del grupo.
@@ -193,7 +232,7 @@ class TrainerService {
           .map((snap) {
         if (snap.docs.isEmpty) return null;
         final doc = snap.docs.first;
-        return Assignment.fromMap({'id': doc.id, ...doc.data()});
+        return Assignment.fromMap(_normalizeAssignmentData({'id': doc.id, ...doc.data()}));
       });
 
   /// Elimina a un miembro del grupo.

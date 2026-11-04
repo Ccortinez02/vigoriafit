@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../core/theme.dart';
@@ -382,9 +383,102 @@ class _SettingsPageState extends State<SettingsPage> {
             label: const Text('Cerrar sesión'),
             style: TextButton.styleFrom(foregroundColor: AppColors.danger),
           ),
+          const SizedBox(height: 4),
+          TextButton.icon(
+            onPressed: () => _deleteAccountFlow(context),
+            icon: const Icon(Icons.delete_forever_rounded),
+            label: const Text('Eliminar cuenta'),
+            style: TextButton.styleFrom(foregroundColor: AppColors.danger),
+          ),
         ],
       ),
     );
+  }
+
+  Future<void> _deleteAccountFlow(BuildContext context) async {
+    final passwordCtrl = TextEditingController();
+    bool obscure = true;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => AlertDialog(
+          title: const Text('¿Eliminar cuenta?'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Esta acción eliminará permanentemente tu cuenta y todos tus datos. '
+                'No se puede deshacer.',
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Ingresa tu contraseña para confirmar:',
+                style: TextStyle(fontSize: 13),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: passwordCtrl,
+                obscureText: obscure,
+                decoration: InputDecoration(
+                  hintText: 'Contraseña',
+                  suffixIcon: IconButton(
+                    icon: Icon(
+                      obscure ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+                    ),
+                    onPressed: () => setState(() => obscure = !obscure),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+              child: const Text('Eliminar cuenta'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (confirmed != true || !context.mounted) return;
+
+    final password = passwordCtrl.text.trim();
+    if (password.isEmpty) return;
+
+    // Reautenticación con credenciales de email/contraseña.
+    try {
+      final email = AppStore.instance.currentEmail;
+      if (email == null) return;
+      final credential = EmailAuthProvider.credential(email: email, password: password);
+      await FirebaseAuth.instance.currentUser?.reauthenticateWithCredential(credential);
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Contraseña incorrecta. No se eliminó la cuenta.')),
+      );
+      return;
+    }
+
+    // Borrado de datos
+    try {
+      await AppStore.instance.deleteAccount();
+      if (!context.mounted) return;
+      Navigator.of(context).popUntil((r) => r.isFirst);
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error al eliminar la cuenta: $e')),
+      );
+    }
   }
 
   Widget _reminders() {

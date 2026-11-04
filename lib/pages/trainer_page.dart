@@ -413,7 +413,7 @@ class _TrainerPageState extends State<TrainerPage> {
               ),
             )
           else
-            ..._members.map(_memberTile),
+            ..._members.map((m) => _memberTile(m, _activeAssignment?.daysPerWeek ?? 0)),
         ],
       ),
     );
@@ -452,12 +452,15 @@ class _TrainerPageState extends State<TrainerPage> {
     );
   }
 
-  Widget _memberTile(GroupMember m) {
+  Widget _memberTile(GroupMember m, int daysPerWeek) {
     final noActivity = m.lastWorkoutAt == null;
     final daysSince = m.lastWorkoutAt == null
         ? null
         : DateTime.now().difference(m.lastWorkoutAt!).inDays;
     final warn = daysSince != null && daysSince >= 5;
+    final adherencePct = daysPerWeek > 0
+        ? (m.workoutsThisWeek / daysPerWeek * 100).clamp(0, 100).round()
+        : null;
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(14),
@@ -501,7 +504,9 @@ class _TrainerPageState extends State<TrainerPage> {
                 Text(
                   noActivity
                       ? 'Sin entrenamientos registrados aún'
-                      : '${m.workoutsThisWeek} esta semana · último hace $daysSince días',
+                      : adherencePct != null
+                          ? '$adherencePct% esta semana (${m.workoutsThisWeek} de $daysPerWeek días) · último hace $daysSince días'
+                          : '${m.workoutsThisWeek} esta semana · último hace $daysSince días',
                   style: TextStyle(
                     fontSize: 12,
                     color: (warn || noActivity)
