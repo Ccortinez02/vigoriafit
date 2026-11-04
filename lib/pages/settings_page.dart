@@ -278,9 +278,9 @@ class _SettingsPageState extends State<SettingsPage> {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 decoration: BoxDecoration(
-                  color: AppColors.danger.withOpacity(0.1),
+                  color: AppColors.danger.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.danger.withOpacity(0.4)),
+                  border: Border.all(color: AppColors.danger.withValues(alpha: 0.4)),
                 ),
                 child: Row(
                   children: [
