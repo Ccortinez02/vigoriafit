@@ -36,17 +36,17 @@ class WorkoutDetailPage extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 8),
-                Row(
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
                   children: [
                     _chip(Icons.schedule_rounded, '${workout.minutes} min'),
-                    const SizedBox(width: 8),
                     _chip(
                       workout.needsGym
                           ? Icons.fitness_center_rounded
                           : Icons.home_rounded,
                       workout.needsGym ? 'Gimnasio' : 'En casa',
                     ),
-                    const SizedBox(width: 8),
                     _chip(Icons.flag_rounded, workout.focus.split(' · ').first),
                   ],
                 ),
@@ -192,12 +192,15 @@ class WorkoutDetailPage extends StatelessWidget {
                             color: AppColors.warn,
                           ),
                           const SizedBox(width: 3),
-                          Text(
-                            'Revisa por tu condición marcada',
-                            style: TextStyle(
-                              fontSize: 10.5,
-                              color: AppColors.warn,
-                              fontWeight: FontWeight.w600,
+                          Flexible(
+                            child: Text(
+                              'Revisa por tu condición marcada',
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                color: AppColors.warn,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
                         ],
@@ -206,13 +209,19 @@ class WorkoutDetailPage extends StatelessWidget {
                   ],
                 ),
               ),
-              const SizedBox(width: 10),
-              Text(
-                e.sets,
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.brand,
+              const SizedBox(width: 8),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 90),
+                child: Text(
+                  e.sets,
+                  style: const TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.brand,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 2,
+                  textAlign: TextAlign.end,
                 ),
               ),
               const SizedBox(width: 4),
