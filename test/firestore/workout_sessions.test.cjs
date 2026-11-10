@@ -214,7 +214,7 @@ test('status no es entero → denegado', async () => {
   );
 });
 
-// ── 7. Inmutabilidad: no update, no delete ───────────────────────────────────
+// ── 7. Inmutabilidad: no update (delete permitido desde Sprint 8) ────────────
 
 test('propietario no puede actualizar sesión existente → denegado', async () => {
   await env.withSecurityRulesDisabled(async ctx => {
@@ -238,12 +238,31 @@ test('propietario no puede sobreescribir sesión con setDoc → denegado', async
   );
 });
 
-test('propietario no puede eliminar sesión → denegado', async () => {
+// SPRINT 8: Las reglas permiten que el propietario borre su propia sesión.
+// La expectativa anterior (denegado) fue actualizada para reflejar el contrato vigente.
+test('propietario puede eliminar su propia sesión → permitido (Sprint 8)', async () => {
   await env.withSecurityRulesDisabled(async ctx => {
     await setDoc(sessRef(ctx.firestore()), validSession());
   });
   const client = db('alice');
+  await assertSucceeds(deleteDoc(sessRef(client)));
+});
+
+// Garantizar que terceros NO pueden borrar sesiones ajenas (aislamiento).
+test('otra cuenta no puede eliminar sesión ajena → denegado', async () => {
+  await env.withSecurityRulesDisabled(async ctx => {
+    await setDoc(sessRef(ctx.firestore()), validSession());
+  });
+  const client = db('bob');
   await assertFails(deleteDoc(sessRef(client)));
+});
+
+// Garantizar que un anónimo tampoco puede borrar.
+test('usuario anónimo no puede eliminar sesión ajena → denegado', async () => {
+  await env.withSecurityRulesDisabled(async ctx => {
+    await setDoc(sessRef(ctx.firestore()), validSession());
+  });
+  await assertFails(deleteDoc(sessRef(db(null))));
 });
 
 // ── 8. Reintento de sync: doc ya existe con mismo contenido ──────────────────
