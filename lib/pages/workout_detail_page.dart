@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../core/theme.dart';
 import '../models/exercise_log.dart';
@@ -725,11 +726,12 @@ class _StartButtonState extends State<_StartButton> {
     try {
       await s.sessions.startSession(widget.workout, uid, prefs);
       if (!mounted) return;
-      await Navigator.of(context).push(
+      // Iniciar sesión y esperar el resultado (true si finalizó con éxito, false si canceló)
+      final completed = await Navigator.of(context).push<bool>(
           MaterialPageRoute(builder: (_) => const WorkoutSessionPage()));
       if (!mounted) return;
-      // Marcado automático si la sesión se finalizó con éxito
-      if (s.sessions.activeSession == null) {
+      // Solo marcar como hecha si la sesión retornó true (completada con éxito)
+      if (completed == true) {
         if (!s.isWorkoutDoneToday(widget.workout.id)) {
           await s.toggleWorkoutDone(widget.workout.id);
         }
@@ -799,6 +801,8 @@ class _RestTimerState extends State<_RestTimer> {
           _remaining = 0;
           _running = false;
         });
+        HapticFeedback.vibrate();
+        SystemSound.play(SystemSoundType.alert);
         return;
       }
       setState(() => _remaining--);

@@ -172,7 +172,7 @@ class _WorkoutSessionPageState extends State<WorkoutSessionPage>
               actions: [
                 Center(
                   child: Padding(
-                    padding: const EdgeInsets.only(right: 8),
+                    padding: const EdgeInsets.only(right: 16),
                     child: Text(
                       _fmtElapsed(_elapsed),
                       style: TextStyle(
@@ -181,11 +181,6 @@ class _WorkoutSessionPageState extends State<WorkoutSessionPage>
                           color: AppColors.muted),
                     ),
                   ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.check_circle_outline_rounded),
-                  tooltip: 'Finalizar',
-                  onPressed: _finish,
                 ),
               ],
               bottom: TabBar(

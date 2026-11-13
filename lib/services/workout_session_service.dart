@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
 
 import '../data/workouts.dart';
@@ -380,6 +381,8 @@ class WorkoutSessionService extends ChangeNotifier {
         _restRunning = false;
         prefs.remove(_kRestStartedAt);
         prefs.remove(_kRestDuration);
+        HapticFeedback.vibrate();
+        SystemSound.play(SystemSoundType.alert);
         notifyListeners();
         return;
       }
