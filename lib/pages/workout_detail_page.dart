@@ -294,6 +294,25 @@ class WorkoutDetailPage extends StatelessWidget {
                           color: AppColors.brand,
                         ),
                       ),
+                      if (e.description.isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: AppColors.surfaceAlt,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            e.description,
+                            textAlign: TextAlign.left,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: AppColors.ink,
+                              height: 1.5,
+                            ),
+                          ),
+                        ),
+                      ],
                       if (e.note.isNotEmpty) ...[
                         const SizedBox(height: 10),
                         Text(
