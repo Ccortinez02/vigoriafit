@@ -107,17 +107,9 @@ class WorkoutSessionService extends ChangeNotifier {
     final rsa = prefs.getInt(_kRestStartedAt);
     final rd = prefs.getInt(_kRestDuration);
     if (rsa != null && rd != null) {
+      _restStartedAt = DateTime.fromMillisecondsSinceEpoch(rsa);
       _restDurationSec = rd;
-      final started = DateTime.fromMillisecondsSinceEpoch(rsa);
-      final remaining = rd - DateTime.now().difference(started).inSeconds;
-      if (remaining > 0) {
-        _restStartedAt = started;
-        _restDurationSec = rd;
-        _startRestTicker(prefs);
-      } else {
-        _restStartedAt = started; // fue activo, mostrar "terminado"
-        _restRunning = false;
-      }
+      _startRestTicker(prefs);
     }
 
     notifyListeners();
