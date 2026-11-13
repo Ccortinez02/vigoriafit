@@ -336,8 +336,10 @@ class _ExerciseTabState extends State<_ExerciseTab> {
         );
         await widget.svc.addSeries(widget.exerciseIndex, entry, widget.prefs);
         // Iniciar descanso automáticamente
-        if (ex.restSeconds > 0) {
-          widget.svc.startRest(ex.restSeconds, widget.prefs);
+        final defaultSec = AppStore.instance.defaultRestSeconds;
+        final restDuration = defaultSec > 0 ? defaultSec : ex.restSeconds;
+        if (restDuration > 0) {
+          widget.svc.startRest(restDuration, widget.prefs);
         }
       }
       _repsCtrl.clear();
@@ -621,31 +623,47 @@ class _RestBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     if (!svc.restRunning && !svc.restFinished) return const SizedBox.shrink();
     final remaining = svc.restRemainingSec;
-    final finished = !svc.restRunning && remaining == 0;
-    final m = remaining ~/ 60;
-    final s = remaining % 60;
-    final label = finished
-        ? '¡Descanso terminado!'
-        : 'Descansando  $m:${s.toString().padLeft(2, '0')}';
+    final overdue = remaining < 0;
+    final absSec = remaining.abs();
+    final m = absSec ~/ 60;
+    final s = absSec % 60;
+    final timeStr = '$m:${s.toString().padLeft(2, '0')}';
+
+    final String label;
+    if (remaining == 0) {
+      label = '¡Descanso terminado! 0:00';
+    } else if (overdue) {
+      label = '¡Descanso pasado! -$timeStr';
+    } else {
+      label = 'Descansando  $timeStr';
+    }
+
+    final finishedOrOverdue = remaining <= 0;
     return Container(
       width: double.infinity,
-      color: finished ? AppColors.brandSoft : AppColors.surfaceAlt,
+      color: finishedOrOverdue ? AppColors.danger.withValues(alpha: 0.15) : AppColors.surfaceAlt,
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
       child: Row(
         children: [
-          Icon(finished ? Icons.notifications_active_rounded : Icons.timer_outlined,
-              size: 18, color: AppColors.brand),
+          Icon(finishedOrOverdue ? Icons.notifications_active_rounded : Icons.timer_outlined,
+              size: 20, color: finishedOrOverdue ? AppColors.danger : AppColors.brand),
           const SizedBox(width: 8),
           Expanded(
             child: Text(label,
                 style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
-                    color: AppColors.ink)),
+                    color: finishedOrOverdue ? AppColors.danger : AppColors.ink)),
           ),
-          TextButton(
+          FilledButton.tonal(
+            style: finishedOrOverdue
+                ? FilledButton.styleFrom(
+                    backgroundColor: AppColors.danger,
+                    foregroundColor: Colors.white,
+                  )
+                : null,
             onPressed: () => svc.stopRest(prefs),
-            child: const Text('OK'),
+            child: const Text('Terminar descanso'),
           ),
         ],
       ),

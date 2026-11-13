@@ -26,6 +26,8 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   late final Profile _p;
   late final TextEditingController _name;
+  late final TextEditingController _restMinCtrl;
+  late final TextEditingController _restSecCtrl;
   bool _saving = false;
   bool _deleting = false;
   SyncState _syncState = SyncState.idle;
@@ -35,11 +37,16 @@ class _SettingsPageState extends State<SettingsPage> {
     super.initState();
     _p = AppStore.instance.profile.copy();
     _name = TextEditingController(text: _p.name);
+    final totalSec = AppStore.instance.defaultRestSeconds;
+    _restMinCtrl = TextEditingController(text: '${totalSec ~/ 60}');
+    _restSecCtrl = TextEditingController(text: '${totalSec % 60}');
   }
 
   @override
   void dispose() {
     _name.dispose();
+    _restMinCtrl.dispose();
+    _restSecCtrl.dispose();
     super.dispose();
   }
 
@@ -179,6 +186,88 @@ class _SettingsPageState extends State<SettingsPage> {
             (v) => setState(() => _p.daysPerWeek = v.round()),
             '${_p.daysPerWeek}',
           ),
+          Builder(builder: (context) {
+            final restSec = AppStore.instance.defaultRestSeconds;
+            final m = restSec ~/ 60;
+            final s = restSec % 60;
+            return Padding(
+              padding: const EdgeInsets.only(top: 14, bottom: 6),
+              child: Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: AppColors.line),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.timer_outlined, size: 18, color: AppColors.brand),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Descanso entre series',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.ink,
+                          ),
+                        ),
+                        const Spacer(),
+                        Text(
+                          '${m}m ${s.toString().padLeft(2, '0')}s',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.brand,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _restMinCtrl,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'Minutos',
+                              isDense: true,
+                              suffixText: 'min',
+                            ),
+                            onChanged: (val) {
+                              final newM = int.tryParse(val) ?? 0;
+                              final curS = int.tryParse(_restSecCtrl.text) ?? 0;
+                              AppStore.instance.setDefaultRestSeconds(newM.clamp(0, 10) * 60 + curS.clamp(0, 59));
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextField(
+                            controller: _restSecCtrl,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'Segundos',
+                              isDense: true,
+                              suffixText: 'seg',
+                            ),
+                            onChanged: (val) {
+                              final curM = int.tryParse(_restMinCtrl.text) ?? 0;
+                              final newS = int.tryParse(val) ?? 0;
+                              AppStore.instance.setDefaultRestSeconds(curM.clamp(0, 10) * 60 + newS.clamp(0, 59));
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
 
           const SizedBox(height: 26),
           _sub('Tu cuerpo'),

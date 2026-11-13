@@ -17,6 +17,7 @@ class Notifications {
   static const _idWater1 = 201;
   static const _idWater2 = 202;
   static const _idWater3 = 203;
+  static const _idRestTimer = 300;
 
   static Future<void> init() async {
     if (_ready) return;
@@ -119,5 +120,31 @@ class Notifications {
     await _plugin.cancel(_idWater1);
     await _plugin.cancel(_idWater2);
     await _plugin.cancel(_idWater3);
+  }
+
+  /// Muestra notificación inmediata cuando se completa el descanso
+  static Future<void> showRestFinishedNotification({String title = '⏰ ¡Descanso terminado!', String body = 'Toca para continuar con tu siguiente serie.'}) async {
+    await init();
+    const androidDetails = AndroidNotificationDetails(
+      'brio_rest_timer',
+      'Temporizador de descanso',
+      channelDescription: 'Aviso de finalización del tiempo de descanso',
+      importance: Importance.max,
+      priority: Priority.high,
+      ongoing: true,
+      autoCancel: true,
+      playSound: true,
+    );
+    await _plugin.show(
+      _idRestTimer,
+      title,
+      body,
+      const NotificationDetails(android: androidDetails),
+    );
+  }
+
+  /// Cancela la notificación de descanso
+  static Future<void> cancelRestNotification() async {
+    await _plugin.cancel(_idRestTimer);
   }
 }

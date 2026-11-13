@@ -92,6 +92,7 @@ class AppStore extends ChangeNotifier {
   static const _kLogs = 'brio_daylogs_v1';
   static const _kWeights = 'brio_weights_v1';
   static const _kWorkoutReminder = 'brio_reminder_workout_v1';
+  static const _kRestDuration = 'brio_default_rest_seconds_v1';
   static const _kWorkoutHour = 'brio_reminder_workout_hour_v1';
   static const _kWorkoutMinute = 'brio_reminder_workout_min_v1';
   static const _kWaterReminder = 'brio_reminder_water_v1';
@@ -722,6 +723,12 @@ class AppStore extends ChangeNotifier {
   }
 
   bool isWorkoutDoneToday(String id) => today.workouts.contains(id);
+
+  int get defaultRestSeconds => _accountPrefs?.getInt(_kRestDuration) ?? 60;
+  Future<void> setDefaultRestSeconds(int seconds) async {
+    await _prefs((p) => p.setInt(_kRestDuration, seconds));
+    notifyListeners();
+  }
 
   Future<void> addFood(FoodEntry entry) async {
     final log = today;

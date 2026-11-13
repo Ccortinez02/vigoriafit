@@ -11,6 +11,7 @@ import '../models/profile.dart';
 import '../models/workout.dart';
 import '../models/workout_session.dart';
 import 'account_preferences.dart';
+import 'alarm_service.dart';
 import 'trainer_service.dart';
 
 /// Gestiona sesiones de entrenamiento: inicio, registro de series, finalización,
@@ -56,11 +57,13 @@ class WorkoutSessionService extends ChangeNotifier {
   int get restRemainingSec {
     if (!_restRunning || _restStartedAt == null) return _restDurationSec;
     final elapsed = DateTime.now().difference(_restStartedAt!).inSeconds;
-    return max(0, _restDurationSec - elapsed);
+    return _restDurationSec - elapsed;
   }
 
+  bool get restOverdue => _restRunning && restRemainingSec <= 0;
+
   bool get restFinished =>
-      _restRunning == false && _restStartedAt != null && restRemainingSec == 0;
+      _restRunning == false && _restStartedAt != null;
 
   // ── Carga inicial ────────────────────────────────────────────────────────
 
@@ -268,6 +271,7 @@ class WorkoutSessionService extends ChangeNotifier {
       // Limpia sesión activa solo tras confirmar (o anotar fallo).
       _active = null;
       await prefs.remove(_kActiveSession);
+      stopRest(prefs);
       notifyListeners();
     } finally {
       _operationInProgress = false;
@@ -292,7 +296,7 @@ class WorkoutSessionService extends ChangeNotifier {
       await _persistHistory(prefs);
       _active = null;
       await prefs.remove(_kActiveSession);
-      _stopRest();
+      stopRest(prefs);
       notifyListeners();
     } finally {
       _operationInProgress = false;
@@ -364,27 +368,23 @@ class WorkoutSessionService extends ChangeNotifier {
   }
 
   void stopRest(AccountPreferences prefs) {
+    AlarmService.instance.stopAlarm();
     _stopRest();
+    _restStartedAt = null;
     prefs.remove(_kRestStartedAt);
     prefs.remove(_kRestDuration);
     notifyListeners();
   }
 
   void resetRest(int durationSec, AccountPreferences prefs) {
+    AlarmService.instance.stopAlarm();
     startRest(durationSec, prefs);
   }
 
   void _startRestTicker(AccountPreferences prefs) {
     _restTicker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (restRemainingSec <= 0) {
-        _restTicker?.cancel();
-        _restRunning = false;
-        prefs.remove(_kRestStartedAt);
-        prefs.remove(_kRestDuration);
-        HapticFeedback.vibrate();
-        SystemSound.play(SystemSoundType.alert);
-        notifyListeners();
-        return;
+      if (restRemainingSec <= 0 && !AlarmService.instance.isPlaying) {
+        AlarmService.instance.startAlarm();
       }
       notifyListeners();
     });

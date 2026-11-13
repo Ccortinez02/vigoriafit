@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../core/theme.dart';
 import '../models/exercise_log.dart';
 import '../models/workout.dart';
+import '../services/alarm_service.dart';
 import '../services/store.dart';
 import 'workout_session_page.dart';
 
@@ -783,34 +784,30 @@ class _RestTimerState extends State<_RestTimer> {
   @override
   void dispose() {
     _timer?.cancel();
+    AlarmService.instance.stopAlarm();
     super.dispose();
   }
 
   void _toggle() {
     if (_running) {
       _timer?.cancel();
+      AlarmService.instance.stopAlarm();
       setState(() => _running = false);
       return;
     }
     if (_remaining <= 0) _remaining = widget.seconds;
     setState(() => _running = true);
     _timer = Timer.periodic(const Duration(seconds: 1), (t) {
-      if (_remaining <= 1) {
-        t.cancel();
-        setState(() {
-          _remaining = 0;
-          _running = false;
-        });
-        HapticFeedback.vibrate();
-        SystemSound.play(SystemSoundType.alert);
-        return;
-      }
       setState(() => _remaining--);
+      if (_remaining <= 0 && !AlarmService.instance.isPlaying) {
+        AlarmService.instance.startAlarm();
+      }
     });
   }
 
   void _reset() {
     _timer?.cancel();
+    AlarmService.instance.stopAlarm();
     setState(() {
       _running = false;
       _remaining = widget.seconds;
@@ -818,28 +815,29 @@ class _RestTimerState extends State<_RestTimer> {
   }
 
   String get _fmt {
-    final m = _remaining ~/ 60;
-    final sec = _remaining % 60;
-    return '$m:${sec.toString().padLeft(2, '0')}';
+    final abs = _remaining.abs();
+    final m = abs ~/ 60;
+    final sec = abs % 60;
+    final prefix = _remaining < 0 ? '-' : '';
+    return '$prefix$m:${sec.toString().padLeft(2, '0')}';
   }
 
   @override
   Widget build(BuildContext context) {
-    final finished = !_running && _remaining == 0;
-    final label = finished
-        ? '¡Descanso terminado! 🔔'
-        : _running
-        ? 'Descansando… $_fmt'
-        : 'Descanso sugerido: ${widget.seconds}s';
+    final overdue = _remaining <= 0;
+    final label = overdue
+        ? (_remaining == 0 ? '¡Descanso terminado! 0:00' : '¡Descanso pasado! $_fmt')
+        : (_running ? 'Descansando… $_fmt' : 'Descanso sugerido: ${widget.seconds}s');
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: finished ? AppColors.brandSoft : AppColors.surfaceAlt,
+        color: overdue ? AppColors.danger.withValues(alpha: 0.15) : AppColors.surfaceAlt,
         borderRadius: BorderRadius.circular(14),
       ),
       child: Row(
         children: [
-          Icon(Icons.timer_outlined, size: 18, color: AppColors.brand),
+          Icon(overdue ? Icons.notifications_active_rounded : Icons.timer_outlined,
+              size: 18, color: overdue ? AppColors.danger : AppColors.brand),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -847,10 +845,19 @@ class _RestTimerState extends State<_RestTimer> {
               style: TextStyle(
                 fontSize: 12.5,
                 fontWeight: FontWeight.w600,
-                color: AppColors.ink,
+                color: overdue ? AppColors.danger : AppColors.ink,
               ),
             ),
           ),
+          if (overdue && AlarmService.instance.isPlaying)
+            TextButton(
+              onPressed: () {
+                AlarmService.instance.stopAlarm();
+                _timer?.cancel();
+                setState(() => _running = false);
+              },
+              child: const Text('Silenciar'),
+            ),
           if (_running || _remaining != widget.seconds)
             IconButton(
               onPressed: _reset,
@@ -871,7 +878,7 @@ class _RestTimerState extends State<_RestTimer> {
                   ? Icons.pause_circle_filled_rounded
                   : Icons.play_circle_fill_rounded,
               size: 30,
-              color: AppColors.brand,
+              color: overdue ? AppColors.danger : AppColors.brand,
             ),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(),

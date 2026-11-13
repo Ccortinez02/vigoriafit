@@ -50,6 +50,7 @@ dependencies:
   firebase_auth: ^5.3.3        # autenticación (Google real)
   google_sign_in: ^6.2.2       # botón "Continuar con Google"
   cloud_firestore: ^5.5.0      # base de datos en la nube (rol entrenador/grupos)
+  audioplayers: ^6.7.1
 
 dev_dependencies:
   flutter_test:
@@ -84,6 +85,7 @@ flutter:
     - assets/places/
     - assets/food/
     - assets/supplements/
+    - assets/audio/
 
 flutter_launcher_icons:
   android: true
