@@ -1,5 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../core/theme.dart';
 import '../models/profile.dart';
@@ -232,15 +233,27 @@ class _SettingsPageState extends State<SettingsPage> {
                           child: TextField(
                             controller: _restMinCtrl,
                             keyboardType: TextInputType.number,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                              LengthLimitingTextInputFormatter(2),
+                            ],
                             decoration: const InputDecoration(
                               labelText: 'Minutos',
+                              hintText: '0-60',
                               isDense: true,
                               suffixText: 'min',
                             ),
                             onChanged: (val) {
-                              final newM = int.tryParse(val) ?? 0;
+                              final parsed = int.tryParse(val) ?? 0;
+                              final clampedM = parsed.clamp(0, 60);
+                              if (parsed > 60) {
+                                _restMinCtrl.text = '$clampedM';
+                                _restMinCtrl.selection = TextSelection.fromPosition(
+                                  TextPosition(offset: _restMinCtrl.text.length),
+                                );
+                              }
                               final curS = int.tryParse(_restSecCtrl.text) ?? 0;
-                              AppStore.instance.setDefaultRestSeconds(newM.clamp(0, 10) * 60 + curS.clamp(0, 59));
+                              AppStore.instance.setDefaultRestSeconds(clampedM * 60 + curS.clamp(0, 59));
                             },
                           ),
                         ),
@@ -249,15 +262,27 @@ class _SettingsPageState extends State<SettingsPage> {
                           child: TextField(
                             controller: _restSecCtrl,
                             keyboardType: TextInputType.number,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                              LengthLimitingTextInputFormatter(2),
+                            ],
                             decoration: const InputDecoration(
                               labelText: 'Segundos',
+                              hintText: '0-59',
                               isDense: true,
                               suffixText: 'seg',
                             ),
                             onChanged: (val) {
+                              final parsed = int.tryParse(val) ?? 0;
+                              final clampedS = parsed.clamp(0, 59);
+                              if (parsed > 59) {
+                                _restSecCtrl.text = '$clampedS';
+                                _restSecCtrl.selection = TextSelection.fromPosition(
+                                  TextPosition(offset: _restSecCtrl.text.length),
+                                );
+                              }
                               final curM = int.tryParse(_restMinCtrl.text) ?? 0;
-                              final newS = int.tryParse(val) ?? 0;
-                              AppStore.instance.setDefaultRestSeconds(curM.clamp(0, 10) * 60 + newS.clamp(0, 59));
+                              AppStore.instance.setDefaultRestSeconds(curM.clamp(0, 60) * 60 + clampedS);
                             },
                           ),
                         ),
