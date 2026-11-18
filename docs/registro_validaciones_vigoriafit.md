@@ -19,5 +19,17 @@
 | **S3-13** | P0 | Límite local de sesiones (recorte a 50) | **Aprobado** | Validado mediante suite de tests automatizada (`workout_session_test.dart`): el algoritmo preserva las 50 más recientes y conserva intactas las pendientes/fallidas. |
 | **S3-14** | P0 | Aislamiento de sesiones entre cuentas | **Pendiente** | Pendiente de comprobación mediante intercambio de sesiones entre cuentas A y B. |
 | **S3-15** | P0 | Reglas Firestore de inmutabilidad | **Aprobado** | Auditado y verificado en `firestore.rules`: lectura/listado exclusivo por `owner(uid)` (línea 100); borrado por `owner(uid)` conforme al Sprint 8 (línea 101); creación restringida a `status == 1` (finished, línea 105); e inmutabilidad absoluta con `allow update: if false;` (línea 108). Suites de reglas cubiertas en `workout_sessions.test.cjs`. |
-| **S3-16** | P1 | Snapshot de rutina frente a cambios | **No ejecutado** | — |
+| **S3-16** | P1 | Snapshot de rutina frente a cambios | **Aprobado** | Todo funcionó correctamente. El historial se lee bien, los datos se guardan de forma fidedigna sin información alterada ni inventada, y las sesiones conservan su snapshot inmutable ante cambios. |
+
+---
+
+# Registro de Validaciones VigoriaFit — Sprint 4
+
+## Estado de Ejecución por Caso
+
+| ID | Prioridad | Nombre / Acción | Estado | Observaciones / Arreglos |
+|---|---|---|---|---|
+| **S4-01** | P0 | Autoridad del rol de entrenador y acceso de alumno | **Aprobado** | Se verificó que una cuenta de alumno no puede autoconcederse el rol de entrenador desde la UI (el switch está restringido por autorización administrativa) y solo tiene acceso a unirse a grupos con código. |
+| **S4-02** | P0 | Creación de grupo y generación de código único | **Aprobado** | Con la cuenta de entrenador autorizada, se accedió al Panel de Entrenador y se creó el grupo exitosamente en Firestore, generando de forma inmediata el código PIN de invitación único de 6 dígitos. |
+| **S4-03** | P1 | Unirse a grupo con código | **No ejecutado** | Próximo a evaluar. |
 

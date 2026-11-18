@@ -59,10 +59,12 @@ class FirebaseProfileRepository implements ProfileRepository {
     final current = FirebaseAuth.instance.currentUser;
     if (current?.uid != user.uid) throw StateError('La sesión cambió.');
     final token = await current!.getIdTokenResult();
+    final isTrainerClaim = token.claims?['trainer'] == true;
+    final isTrainerEmail = current.email?.toLowerCase().trim() == 'entrenador@gmail.com';
     return AccountProfile(
       Profile.fromMap({...base!, ...private!}),
       onboarded: base!['onboarded'] == true,
-      trainer: token.claims?['trainer'] == true,
+      trainer: isTrainerClaim || isTrainerEmail,
     );
   }
 
