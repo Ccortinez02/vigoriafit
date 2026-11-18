@@ -133,22 +133,43 @@ class TrainerService {
     String userName,
     Workout w, {
     String? assignmentId,
+    List<Map<String, dynamic>>? exercises,
   }) async {
     final docRef =
         _groups.doc(groupId).collection('completions').doc(sessionId);
-    await _db.runTransaction((tx) async {
-      final snap = await tx.get(docRef);
-      if (snap.exists) return; // idempotente
-      tx.set(docRef, {
-        'sessionId': sessionId,
-        'userId': userId,
-        'userName': userName,
-        'workoutId': w.id,
-        'workoutTitle': w.title,
-        'completedAt': FieldValue.serverTimestamp(),
-        'assignmentId': ?assignmentId,
+    try {
+      await _db.runTransaction((tx) async {
+        final snap = await tx.get(docRef);
+        if (snap.exists) return; // idempotente
+        tx.set(docRef, {
+          'sessionId': sessionId,
+          'userId': userId,
+          'userName': userName,
+          'workoutId': w.id,
+          'workoutTitle': w.title,
+          'completedAt': FieldValue.serverTimestamp(),
+          'assignmentId': ?assignmentId,
+          'exercises': ?exercises,
+        });
       });
-    });
+    } catch (_) {
+      // Si la regla de Firestore en Firebase Console aún no permite 'exercises',
+      // reintentar guardando los campos estándar para asegurar que la finalización
+      // y la adherencia del alumno queden siempre registradas sin error.
+      await _db.runTransaction((tx) async {
+        final snap = await tx.get(docRef);
+        if (snap.exists) return;
+        tx.set(docRef, {
+          'sessionId': sessionId,
+          'userId': userId,
+          'userName': userName,
+          'workoutId': w.id,
+          'workoutTitle': w.title,
+          'completedAt': FieldValue.serverTimestamp(),
+          'assignmentId': ?assignmentId,
+        });
+      });
+    }
   }
 
   /// Crea una asignación de rutina al grupo y devuelve el [Assignment] creado.
@@ -283,6 +304,45 @@ class TrainerService {
     }
     final list = members.values.toList();
     list.sort((a, b) => a.name.compareTo(b.name));
+    return list;
+  }
+
+  /// Trae el historial de entrenamientos completados por un alumno específico
+  /// en el grupo, incluyendo los ejercicios y series registradas.
+  static Future<List<Map<String, dynamic>>> getMemberCompletions(
+    String groupId,
+    String memberUid,
+  ) async {
+    final snap = await _groups
+        .doc(groupId)
+        .collection('completions')
+        .where('userId', isEqualTo: memberUid)
+        .get();
+    final list = <Map<String, dynamic>>[];
+    for (final doc in snap.docs) {
+      final data = {'id': doc.id, ...doc.data()};
+      // Si la completion no guardó los ejercicios (ej. sesiones anteriores),
+      // intenta recuperarlos directamente de la sesión del usuario.
+      if (data['exercises'] == null) {
+        try {
+          final sessionDoc = await _db
+              .collection('users')
+              .doc(memberUid)
+              .collection('workout_sessions')
+              .doc(doc.id)
+              .get();
+          if (sessionDoc.exists && sessionDoc.data()?['exercises'] != null) {
+            data['exercises'] = sessionDoc.data()!['exercises'];
+          }
+        } catch (_) {}
+      }
+      list.add(data);
+    }
+    list.sort((a, b) {
+      final atA = (a['completedAt'] as Timestamp?)?.toDate() ?? DateTime(2000);
+      final atB = (b['completedAt'] as Timestamp?)?.toDate() ?? DateTime(2000);
+      return atB.compareTo(atA);
+    });
     return list;
   }
 

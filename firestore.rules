@@ -97,7 +97,8 @@ service cloud.firestore {
           && request.resource.data.createdAt == resource.data.createdAt;
       }
       match /workout_sessions/{sessionId} {
-        allow get, list: if owner(uid);
+        allow get: if owner(uid) || (signedIn() && resource.data.groupId != null && groupOwner(resource.data.groupId));
+        allow list: if owner(uid);
         allow delete: if owner(uid);
         // Crear: solo el propietario, con datos válidos, solo sesiones finalizadas.
         // El sessionId (UUID) se genera en cliente y no puede reutilizarse.
@@ -109,7 +110,7 @@ service cloud.firestore {
       }
     }
     function groupOwner(gid) {
-      return trainer() && get(/databases/$(database)/documents/groups/$(gid)).data.trainerId == request.auth.uid;
+      return signedIn() && get(/databases/$(database)/documents/groups/$(gid)).data.trainerId == request.auth.uid;
     }
     function member(gid) {
       return signedIn() && exists(/databases/$(database)/documents/groups/$(gid)/members/$(request.auth.uid));
@@ -147,20 +148,21 @@ service cloud.firestore {
         allow delete: if owner(uid) || groupOwner(gid);
       }
       match /completions/{sid} {
-        allow read: if groupOwner(gid) || (signedIn() && member(gid) && resource.data.userId == request.auth.uid);
+        allow read: if groupOwner(gid) || (signedIn() && member(gid) && (resource == null || resource.data.userId == request.auth.uid));
         // sid (doc ID) debe coincidir con sessionId: garantía de idempotencia.
         // Un segundo intento con el mismo sessionId falla aquí (allow update: if false),
         // y el cliente usa una transacción que omite el set si el doc ya existe.
         allow create: if member(gid)
           && sid == request.resource.data.sessionId
           && request.resource.data.keys().hasAll(['sessionId','userId','userName','workoutId','workoutTitle','completedAt'])
-          && request.resource.data.keys().hasOnly(['sessionId','userId','userName','workoutId','workoutTitle','completedAt','assignmentId'])
+          && request.resource.data.keys().hasOnly(['sessionId','userId','userName','workoutId','workoutTitle','completedAt','assignmentId','exercises'])
           && text(request.resource.data.sessionId,128)
           && request.resource.data.userId == request.auth.uid
           && text(request.resource.data.userName,120) && text(request.resource.data.workoutId,100)
           && text(request.resource.data.workoutTitle,200)
           && request.resource.data.completedAt == request.time
-          && (!request.resource.data.keys().hasAny(['assignmentId']) || text(request.resource.data.assignmentId,128));
+          && (!request.resource.data.keys().hasAny(['assignmentId']) || text(request.resource.data.assignmentId,128))
+          && (!request.resource.data.keys().hasAny(['exercises']) || request.resource.data.exercises is list);
         allow update, delete: if false;
       }
       function validAssignment(d) {

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -23,15 +24,29 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
   bool _busy = false;
   Map<String, dynamic>? _group;
   Assignment? _assignment;
+  StreamSubscription<Assignment?>? _assignmentSub;
 
   @override
   void initState() {
     super.initState();
-    if (AppStore.instance.inGroup) _loadGroup();
+    if (AppStore.instance.inGroup) {
+      _loadGroup();
+      _subscribeAssignment();
+    }
+  }
+
+  void _subscribeAssignment() {
+    final groupId = AppStore.instance.groupId;
+    if (groupId == null) return;
+    _assignmentSub?.cancel();
+    _assignmentSub = TrainerService.watchActiveAssignment(groupId).listen((a) {
+      if (mounted) setState(() => _assignment = a);
+    });
   }
 
   @override
   void dispose() {
+    _assignmentSub?.cancel();
     _codeCtrl.dispose();
     super.dispose();
   }
@@ -79,6 +94,7 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
       if (!mounted || s.currentUid != uid) return;
       await s.setMyGroup(groupId, code);
       await _loadGroup();
+      _subscribeAssignment();
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -120,6 +136,7 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
     try {
       await TrainerService.leaveGroup(groupId, s.localUserId);
       if (!mounted || s.currentUid != uid) return;
+      _assignmentSub?.cancel();
       await s.leaveGroup();
       if (mounted) setState(() { _group = null; _assignment = null; });
     } catch (_) {
@@ -372,6 +389,8 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
                           // Usa exercisesSnapshot para mostrar los ejercicios
                           // tal como fueron asignados, no la versión actual del catálogo.
                           workout: a.workoutFromSnapshot(workout),
+                          assignmentId: a.id,
+                          groupId: groupId,
                         ),
                       ),
                     ),

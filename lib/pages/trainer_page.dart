@@ -8,6 +8,7 @@ import '../models/assignment.dart';
 import '../models/workout.dart';
 import '../services/store.dart';
 import '../services/trainer_service.dart';
+import 'member_profile_page.dart';
 
 /// Panel del entrenador: crea un grupo, comparte el código con sus alumnos,
 /// les asigna una rutina del catálogo y ve quién de verdad está entrenando.
@@ -463,7 +464,6 @@ class _TrainerPageState extends State<TrainerPage> {
         : null;
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
@@ -471,67 +471,94 @@ class _TrainerPageState extends State<TrainerPage> {
           color: (warn || noActivity) ? AppColors.warn : AppColors.line,
         ),
       ),
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: AppColors.brandSoft,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Text(
-              m.name.isNotEmpty ? m.name[0].toUpperCase() : '?',
-              style: TextStyle(
-                fontWeight: FontWeight.w800,
-                color: AppColors.brandDark,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () {
+            final gid = AppStore.instance.groupId;
+            if (gid == null) return;
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => MemberProfilePage(
+                  groupId: gid,
+                  member: m,
+                  activeAssignment: _activeAssignment,
+                ),
               ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            ).then((_) => _refresh());
+          },
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
               children: [
-                Text(
-                  m.name,
-                  style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.ink,
+                Container(
+                  width: 40,
+                  height: 40,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: AppColors.brandSoft,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    m.name.isNotEmpty ? m.name[0].toUpperCase() : '?',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.brandDark,
+                    ),
                   ),
                 ),
-                Text(
-                  noActivity
-                      ? 'Sin entrenamientos registrados aún'
-                      : adherencePct != null
-                          ? '$adherencePct% esta semana (${m.trainingDaysThisWeek} de $daysPerWeek días) · último hace $daysSince días'
-                          : '${m.trainingDaysThisWeek} esta semana · último hace $daysSince días',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: (warn || noActivity)
-                        ? AppColors.warn
-                        : AppColors.muted,
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        m.name,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.ink,
+                        ),
+                      ),
+                      Text(
+                        noActivity
+                            ? 'Sin entrenamientos registrados aún'
+                            : adherencePct != null
+                                ? '$adherencePct% esta semana (${m.trainingDaysThisWeek} de $daysPerWeek días) · último hace $daysSince días'
+                                : '${m.trainingDaysThisWeek} esta semana · último hace $daysSince días',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: (warn || noActivity)
+                              ? AppColors.warn
+                              : AppColors.muted,
+                        ),
+                      ),
+                    ],
                   ),
+                ),
+                if (warn || noActivity)
+                  const Icon(
+                    Icons.warning_amber_rounded,
+                    size: 18,
+                    color: AppColors.warn,
+                  ),
+                const SizedBox(width: 4),
+                IconButton(
+                  onPressed: () => _removeMember(m),
+                  icon: const Icon(Icons.person_remove_rounded, size: 18),
+                  color: AppColors.danger,
+                  tooltip: 'Retirar alumno',
+                  visualDensity: VisualDensity.compact,
+                ),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  color: AppColors.muted,
+                  size: 20,
                 ),
               ],
             ),
           ),
-          if (warn || noActivity)
-            const Icon(
-              Icons.warning_amber_rounded,
-              size: 18,
-              color: AppColors.warn,
-            ),
-          const SizedBox(width: 4),
-          IconButton(
-            onPressed: () => _removeMember(m),
-            icon: const Icon(Icons.person_remove_rounded, size: 18),
-            color: AppColors.danger,
-            tooltip: 'Retirar alumno',
-            visualDensity: VisualDensity.compact,
-          ),
-        ],
+        ),
       ),
     );
   }

@@ -512,6 +512,7 @@ class WorkoutSessionService extends ChangeNotifier {
               userName,
               w,
               assignmentId: session.assignmentId,
+              exercises: session.exercises.map((e) => e.toMap()).toList(),
             );
           }
         } catch (_) {

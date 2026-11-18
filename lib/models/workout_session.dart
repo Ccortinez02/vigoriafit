@@ -120,7 +120,8 @@ class SessionExercise {
         trackingType: TrackingType.values[(m['ty'] as int? ?? 0).clamp(0, 2)],
         restSeconds: m['rs'] as int? ?? 60,
         series: (m['sr'] as List<dynamic>?)
-                ?.map((e) => SeriesEntry.fromMap(e as Map<String, dynamic>))
+                ?.map((e) => SeriesEntry.fromMap(
+                    Map<String, dynamic>.from(e as Map)))
                 .toList() ??
             [],
       );

@@ -13,7 +13,15 @@ import 'workout_session_page.dart';
 /// Detalle de una rutina: lista de ejercicios y botón para marcarla completada.
 class WorkoutDetailPage extends StatelessWidget {
   final Workout workout;
-  const WorkoutDetailPage({super.key, required this.workout});
+  final String? assignmentId;
+  final String? groupId;
+
+  const WorkoutDetailPage({
+    super.key,
+    required this.workout,
+    this.assignmentId,
+    this.groupId,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -69,7 +77,11 @@ class WorkoutDetailPage extends StatelessWidget {
                 // Botón principal: iniciar sesión
                 SizedBox(
                   width: double.infinity,
-                  child: _StartButton(workout: workout),
+                  child: _StartButton(
+                    workout: workout,
+                    assignmentId: assignmentId,
+                    groupId: groupId,
+                  ),
                 ),
                 const SizedBox(height: 10),
                 // Marcado rápido (retrocompatible con el flujo anterior)
@@ -674,7 +686,14 @@ class WorkoutDetailPage extends StatelessWidget {
 
 class _StartButton extends StatefulWidget {
   final Workout workout;
-  const _StartButton({required this.workout});
+  final String? assignmentId;
+  final String? groupId;
+
+  const _StartButton({
+    required this.workout,
+    this.assignmentId,
+    this.groupId,
+  });
 
   @override
   State<_StartButton> createState() => _StartButtonState();
@@ -725,7 +744,13 @@ class _StartButtonState extends State<_StartButton> {
     _starting = true;
     setState(() {});
     try {
-      await s.sessions.startSession(widget.workout, uid, prefs);
+      await s.sessions.startSession(
+        widget.workout,
+        uid,
+        prefs,
+        assignmentId: widget.assignmentId,
+        groupId: widget.groupId,
+      );
       if (!mounted) return;
       // Iniciar sesión y esperar el resultado (true si finalizó con éxito, false si canceló)
       final completed = await Navigator.of(context).push<bool>(
