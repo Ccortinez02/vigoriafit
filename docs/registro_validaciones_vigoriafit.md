@@ -32,5 +32,24 @@
 | **S4-01** | P0 | Autoridad del rol de entrenador y acceso de alumno | **Aprobado** | Se verificó que una cuenta de alumno no puede autoconcederse el rol de entrenador desde la UI (el switch está restringido por autorización administrativa) y solo tiene acceso a unirse a grupos con código. |
 | **S4-02** | P0 | Creación de grupo y generación de código único | **Aprobado** | Con la cuenta de entrenador autorizada, se accedió al Panel de Entrenador y se creó el grupo exitosamente en Firestore, generando de forma inmediata el código PIN de invitación único de 6 dígitos. |
 | **S4-03** | P1 | Unirse a grupo con código | **Aprobado** | Validación de PIN inválido con alertas correspondientes. Unirse con PIN correcto vincula al alumno al grupo, carga la rutina asignada y muestra el nombre del entrenador. Requiere índice compuesto en Firestore (`assignments`: `status ASC` + `createdAt DESC`). Corrección de regla de lectura en `completions` (`resource == null`) para permitir comprobación de idempotencia en transacciones. El alumno completa la rutina y se registra el cumplimiento (`completions`) en Firestore para el cálculo de adherencia del entrenador. Se implementó la pantalla de Perfil de Alumno (`MemberProfilePage`) permitiendo al entrenador inspeccionar el listado de ejercicios, series, repeticiones y cargas realizadas por el alumno. Se habilitó sincronización en tiempo real (`watchActiveAssignment`) en la vista del alumno y vinculación de sesión desde el detalle de rutina. Funcionalidad de retiro de alumnos verificada. |
-| **S4-04** | P1 | Asignación de rutina versionada | **No ejecutado** | Próximo a evaluar. |
+| **S4-04** | P1 | Asignación de rutina versionada | **Pendiente** | Aplazado por el usuario. Pendiente de evaluación posterior. |
+| **S4-05** | P1 | Alumno abandona / entrenador retira; revocación de acceso | **Aprobado** | Implementado y validado en dispositivo (commit `feat(S4-05)`). Al retirar un alumno o al salir este del grupo: (1) se elimina el doc `members/{uid}`; (2) se borran todos sus `completions` del grupo en batch, reseteando su historial de adherencia. El alumno ya no ve la rutina asignada. Para evitar que un alumno retirado vuelva a unirse sin consentimiento, se implementó rotación de código de invitación (`rotateCode`): el entrenador genera un nuevo PIN desde el Panel; los alumnos actuales permanecen; el código anterior queda inválido. Cambios en reglas Firestore: `completions allow delete: if groupOwner(gid)` y `groupInvites allow create: if signedIn()` (en lugar de `trainer()`). |
+
+---
+
+## Cambios de código — 18/19 noviembre 2026 (commit `feat(S4-05)`)
+
+### Archivos modificados
+
+| Archivo | Cambio |
+|---|---|
+| `lib/services/trainer_service.dart` | `leaveGroup()` ahora elimina al miembro y borra todos sus `completions` del grupo (best-effort). Nuevo método `rotateCode()`: genera código único, transacción atómica que actualiza `groups/{gid}.code` y crea nueva entrada en `groupInvites`. |
+| `lib/pages/trainer_page.dart` | Nuevo método `_rotateCode()` con diálogo de confirmación. Tarjeta del código muestra dos botones en fila: **Copiar** y **Cambiar**. Variable de estado `_rotatingCode` para indicador de carga. |
+| `lib/pages/member_profile_page.dart` | Vista de ejercicios en perfil del alumno: contador de series (`"X series"`) movido al lado derecho del nombre del ejercicio. Chips de reps/kg/duración permanecen debajo. Eliminado el texto duplicado de series que aparecía bajo el nombre. |
+| `firestore.rules` | `completions`: `allow delete: if groupOwner(gid)` (antes `delete: if false`). `groupInvites`: `allow create: if signedIn()` (antes `trainer()`). `groups/{gid}`: `allow update` acepta también rotación de `code` (campo único, formato 6 dígitos). |
+
+### Cambios en Firebase Console requeridos (aplicados manualmente)
+1. `completions`: `allow update: if false; allow delete: if groupOwner(gid);`
+2. `groupInvites`: `allow create: if signedIn() && ...` (reemplaza `trainer()`)
+3. `groups/{gid}`: bloque `allow update` expandido con cláusula OR para rotación de código
 

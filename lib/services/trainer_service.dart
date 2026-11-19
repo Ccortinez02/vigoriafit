@@ -101,8 +101,29 @@ class TrainerService {
     return groupId;
   }
 
+  /// Elimina a un miembro del grupo **y borra todos sus completions** en ese grupo.
+  /// Así el historial de adherencia queda limpio si el alumno vuelve a unirse.
   static Future<void> leaveGroup(String groupId, String uid) async {
+    // Eliminar el doc de miembro (siempre, operación crítica)
     await _groups.doc(groupId).collection('members').doc(uid).delete();
+    // Eliminar sus completions (best-effort: no bloquea si falla por permisos)
+    try {
+      final compsSnap = await _groups
+          .doc(groupId)
+          .collection('completions')
+          .where('userId', isEqualTo: uid)
+          .get();
+      if (compsSnap.docs.isNotEmpty) {
+        final batch = _db.batch();
+        for (final doc in compsSnap.docs) {
+          batch.delete(doc.reference);
+        }
+        await batch.commit();
+      }
+    } catch (_) {
+      // Si la regla aún no está desplegada en Firebase Console, se ignora.
+      // El miembro ya fue removido; los completions quedarán huérfanos sin impacto.
+    }
   }
 
   static Future<void> assignWorkout(String groupId, Workout w) async {
@@ -271,6 +292,32 @@ class TrainerService {
   /// Elimina a un miembro del grupo.
   static Future<void> removeMember(String groupId, String uid) =>
       leaveGroup(groupId, uid);
+
+  /// Genera un nuevo código de invitación para el grupo.
+  /// Los miembros actuales permanecen (la membresía es por UID, no por código).
+  /// El código anterior sigue en groupInvites pero el grupo ya apunta al nuevo,
+  /// por lo que nadie puede re-unirse con el código viejo.
+  static Future<String> rotateCode(String groupId) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) throw StateError('Inicia sesión.');
+    for (var attempt = 0; attempt < 5; attempt++) {
+      final newCode = _newCode();
+      final newInviteRef = _db.collection('groupInvites').doc(newCode);
+      final groupRef = _groups.doc(groupId);
+      final done = await _db.runTransaction((tx) async {
+        if ((await tx.get(newInviteRef)).exists) return false;
+        tx.update(groupRef, {'code': newCode});
+        tx.set(newInviteRef, {
+          'groupId': groupId,
+          'trainerId': user.uid,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+        return true;
+      });
+      if (done) return newCode;
+    }
+    throw StateError('No se pudo generar un código. Inténtalo nuevamente.');
+  }
 
   /// Trae los miembros del grupo con su adherencia (entrenamientos en los
   /// últimos 7 días y fecha del último).

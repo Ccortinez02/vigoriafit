@@ -395,11 +395,13 @@ class _MemberProfilePageState extends State<MemberProfilePage> {
   Widget _buildExerciseDetail(SessionExercise ex) {
     final doneSeries =
         ex.series.where((s) => s.status == SeriesStatus.done).toList();
+    final totalSeries = ex.series.length;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Fila: imagen | nombre del ejercicio | "X series" a la derecha
           Row(
             children: [
               ClipRRect(
@@ -428,11 +430,11 @@ class _MemberProfilePageState extends State<MemberProfilePage> {
                 ),
               ),
               Text(
-                '${doneSeries.length} / ${ex.series.length} series',
+                '${doneSeries.length} ${doneSeries.length == 1 ? 'serie' : 'series'}',
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
-                  color: doneSeries.length == ex.series.length
+                  color: doneSeries.length == totalSeries
                       ? AppColors.brand
                       : AppColors.muted,
                 ),
@@ -440,6 +442,7 @@ class _MemberProfilePageState extends State<MemberProfilePage> {
             ],
           ),
           const SizedBox(height: 6),
+          // Chips de reps/kg/duración por serie (debajo del nombre)
           Padding(
             padding: const EdgeInsets.only(left: 42),
             child: Wrap(
@@ -459,7 +462,6 @@ class _MemberProfilePageState extends State<MemberProfilePage> {
                 if (s.durationSec != null && s.durationSec! > 0) {
                   desc += ': ${s.durationSec}s';
                 }
-
                 return Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(

@@ -198,6 +198,46 @@ class _TrainerPageState extends State<TrainerPage> {
     await _refresh();
   }
 
+  bool _rotatingCode = false;
+
+  Future<void> _rotateCode() async {
+    final groupId = AppStore.instance.groupId;
+    if (groupId == null) return;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Cambiar código del grupo'),
+        content: const Text(
+          'Se generará un nuevo código. Los alumnos actuales permanecen en el grupo, '
+          'pero nadie podrá unirse con el código anterior.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Cambiar')),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+    setState(() => _rotatingCode = true);
+    try {
+      final newCode = await TrainerService.rotateCode(groupId);
+      await AppStore.instance.setMyGroup(groupId, newCode);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Nuevo código: $newCode 🔑')),
+        );
+        setState(() {});
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No se pudo cambiar el código.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _rotatingCode = false);
+    }
+  }
   Future<void> _removeMember(GroupMember m) async {
     final groupId = AppStore.instance.groupId;
     if (groupId == null) return;
@@ -332,19 +372,43 @@ class _TrainerPageState extends State<TrainerPage> {
                   ),
                 ),
                 const SizedBox(height: 10),
-                OutlinedButton.icon(
-                  onPressed: () {
-                    Clipboard.setData(ClipboardData(text: code));
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Código copiado 📋')),
-                    );
-                  },
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.white,
-                    side: const BorderSide(color: Colors.white54),
-                  ),
-                  icon: const Icon(Icons.copy_rounded, size: 16),
-                  label: const Text('Copiar código'),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: () {
+                        Clipboard.setData(ClipboardData(text: code));
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Código copiado 📋')),
+                        );
+                      },
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        side: const BorderSide(color: Colors.white54),
+                      ),
+                      icon: const Icon(Icons.copy_rounded, size: 16),
+                      label: const Text('Copiar'),
+                    ),
+                    const SizedBox(width: 10),
+                    OutlinedButton.icon(
+                      onPressed: _rotatingCode ? null : _rotateCode,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        side: const BorderSide(color: Colors.white54),
+                      ),
+                      icon: _rotatingCode
+                          ? const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.refresh_rounded, size: 16),
+                      label: const Text('Cambiar'),
+                    ),
+                  ],
                 ),
               ],
             ),

@@ -131,9 +131,17 @@ service cloud.firestore {
         && request.resource.data.createdAt == request.time
         && request.resource.data.assignedWorkoutId == null && request.resource.data.assignedWorkoutTitle == null
         && !request.resource.data.keys().hasAny(['assignedAt']);
-      allow update: if groupOwner(gid) && validGroup(request.resource.data)
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['assignedWorkoutId','assignedWorkoutTitle','assignedAt'])
-        && request.resource.data.assignedAt == request.time;
+      allow update: if groupOwner(gid) && (
+        // Actualización de rutina asignada (legacy)
+        (validGroup(request.resource.data)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['assignedWorkoutId','assignedWorkoutTitle','assignedAt'])
+          && request.resource.data.assignedAt == request.time)
+        ||
+        // Rotación de código de invitación
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['code'])
+          && request.resource.data.code is string
+          && request.resource.data.code.matches('^[0-9]{6}$'))
+      );
       match /members/{uid} {
         allow get: if groupOwner(gid) || owner(uid);
         allow list: if groupOwner(gid);
@@ -163,7 +171,8 @@ service cloud.firestore {
           && request.resource.data.completedAt == request.time
           && (!request.resource.data.keys().hasAny(['assignmentId']) || text(request.resource.data.assignmentId,128))
           && (!request.resource.data.keys().hasAny(['exercises']) || request.resource.data.exercises is list);
-        allow update, delete: if false;
+        allow update: if false;
+        allow delete: if groupOwner(gid);
       }
       function validAssignment(d) {
         return d.keys().hasAll(['groupId','trainerId','workoutId','workoutTitle','exercisesSnapshot','startAt','daysPerWeek','timezone','status','createdAt'])
@@ -193,7 +202,7 @@ service cloud.firestore {
     match /groupInvites/{code} {
       allow get: if signedIn();
       allow list, update, delete: if false;
-      allow create: if trainer() && code.matches('^[0-9]{6}$')
+      allow create: if signedIn() && code.matches('^[0-9]{6}$')
         && request.resource.data.keys().hasAll(['groupId','trainerId','createdAt'])
         && request.resource.data.keys().hasOnly(['groupId','trainerId','createdAt'])
         && text(request.resource.data.groupId,128) && request.resource.data.trainerId == request.auth.uid
