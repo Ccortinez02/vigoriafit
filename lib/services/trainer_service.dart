@@ -203,6 +203,9 @@ class TrainerService {
   }) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) throw StateError('Inicia sesión.');
+    if (endAt != null && !endAt.isAfter(startAt)) {
+      throw ArgumentError('La fecha de término debe ser posterior a la fecha de inicio.');
+    }
     final docRef = _groups.doc(groupId).collection('assignments').doc();
     final now = DateTime.now();
     final exercisesSnapshot = Assignment.exerciseSnapshotFrom(w.exercises);
@@ -260,8 +263,28 @@ class TrainerService {
     };
   }
 
-  /// Devuelve la asignación activa del grupo, o null si no existe.
+  /// Devuelve la asignación activa y actualmente vigente del grupo (no futura ni vencida),
+  /// o null si no existe.
   static Future<Assignment?> getActiveAssignment(String groupId) async {
+    final snap = await _groups
+        .doc(groupId)
+        .collection('assignments')
+        .where('status', isEqualTo: 'active')
+        .orderBy('createdAt', descending: true)
+        .limit(10)
+        .get();
+    if (snap.docs.isEmpty) return null;
+    final now = DateTime.now();
+    for (final doc in snap.docs) {
+      final a = Assignment.fromMap(_normalizeAssignmentData({'id': doc.id, ...doc.data()}));
+      if (a.isEffective(now)) return a;
+    }
+    return null;
+  }
+
+  /// Devuelve la última asignación activa creada (para visualización en panel de entrenador,
+  /// incluyendo programaciones futuras o por vencer).
+  static Future<Assignment?> getLatestAssignment(String groupId) async {
     final snap = await _groups
         .doc(groupId)
         .collection('assignments')
@@ -274,19 +297,24 @@ class TrainerService {
     return Assignment.fromMap(_normalizeAssignmentData({'id': doc.id, ...doc.data()}));
   }
 
-  /// Escucha en tiempo real la asignación activa del grupo.
+  /// Escucha en tiempo real la asignación activa y vigente del grupo (filtra asignaciones
+  /// futuras hasta que llegue su fecha de inicio).
   static Stream<Assignment?> watchActiveAssignment(String groupId) =>
       _groups
           .doc(groupId)
           .collection('assignments')
           .where('status', isEqualTo: 'active')
           .orderBy('createdAt', descending: true)
-          .limit(1)
+          .limit(10)
           .snapshots()
           .map((snap) {
         if (snap.docs.isEmpty) return null;
-        final doc = snap.docs.first;
-        return Assignment.fromMap(_normalizeAssignmentData({'id': doc.id, ...doc.data()}));
+        final now = DateTime.now();
+        for (final doc in snap.docs) {
+          final a = Assignment.fromMap(_normalizeAssignmentData({'id': doc.id, ...doc.data()}));
+          if (a.isEffective(now)) return a;
+        }
+        return null;
       });
 
   /// Elimina a un miembro del grupo.

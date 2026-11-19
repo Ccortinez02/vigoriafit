@@ -82,6 +82,27 @@ class Assignment {
   factory Assignment.fromJson(String s) =>
       Assignment.fromMap(jsonDecode(s) as Map<String, dynamic>);
 
+  /// Indica si la asignación está dentro de su ventana de vigencia temporal.
+  bool isEffective([DateTime? now]) {
+    final current = now ?? DateTime.now();
+    if (status != 'active') return false;
+    if (startAt.isAfter(current)) return false; // Asignación futura
+    if (endAt != null && endAt!.isBefore(current)) return false; // Asignación vencida
+    return true;
+  }
+
+  /// Indica si la asignación está programada para iniciar en el futuro.
+  bool isFuture([DateTime? now]) {
+    final current = now ?? DateTime.now();
+    return status == 'active' && startAt.isAfter(current);
+  }
+
+  /// Indica si la asignación ya venció según su endAt.
+  bool isExpired([DateTime? now]) {
+    final current = now ?? DateTime.now();
+    return endAt != null && endAt!.isBefore(current);
+  }
+
   /// Construye un snapshot de ejercicios a partir de la lista de [Exercise].
   static List<Map<String, dynamic>> exerciseSnapshotFrom(
     List<Exercise> exercises,

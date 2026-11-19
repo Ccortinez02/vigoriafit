@@ -64,7 +64,7 @@ class _TrainerPageState extends State<TrainerPage> {
       final results = await Future.wait([
         TrainerService.getGroup(groupId),
         TrainerService.membersWithAdherence(groupId),
-        TrainerService.getActiveAssignment(groupId),
+        TrainerService.getLatestAssignment(groupId),
       ]);
       if (mounted) {
         setState(() {
@@ -142,36 +142,127 @@ class _TrainerPageState extends State<TrainerPage> {
     );
     if (chosen == null || !mounted) return;
 
-    // Paso 2: configurar días por semana
+    // Paso 2: configurar días por semana y fechas de vigencia
     int daysPerWeek = 3;
+    DateTime startAt = DateTime.now();
+    DateTime? endAt;
+    final dateFmt = DateFormat('d/MM/yyyy', 'es');
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: Text('Configurar asignación'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(chosen.title, style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.brand)),
-              const SizedBox(height: 16),
-              Text('Días por semana: $daysPerWeek', style: TextStyle(color: AppColors.ink)),
-              Slider(
-                value: daysPerWeek.toDouble(),
-                min: 1,
-                max: 7,
-                divisions: 6,
-                label: '$daysPerWeek',
-                activeColor: AppColors.brand,
-                onChanged: (v) => setDialogState(() => daysPerWeek = v.round()),
+        builder: (ctx, setDialogState) {
+          final isInvalidEnd = endAt != null && !endAt!.isAfter(startAt);
+          return AlertDialog(
+            title: const Text('Configurar asignación'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    chosen.title,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.brand,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Días por semana: $daysPerWeek',
+                    style: TextStyle(color: AppColors.ink),
+                  ),
+                  Slider(
+                    value: daysPerWeek.toDouble(),
+                    min: 1,
+                    max: 7,
+                    divisions: 6,
+                    label: '$daysPerWeek',
+                    activeColor: AppColors.brand,
+                    onChanged: (v) => setDialogState(() => daysPerWeek = v.round()),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Fecha de inicio:',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.ink),
+                  ),
+                  const SizedBox(height: 4),
+                  OutlinedButton.icon(
+                    onPressed: () async {
+                      final picked = await showDatePicker(
+                        context: ctx,
+                        initialDate: startAt,
+                        firstDate: DateTime.now().subtract(const Duration(days: 30)),
+                        lastDate: DateTime.now().add(const Duration(days: 365)),
+                      );
+                      if (picked != null) {
+                        setDialogState(() => startAt = picked);
+                      }
+                    },
+                    icon: const Icon(Icons.calendar_today_rounded, size: 16),
+                    label: Text(dateFmt.format(startAt)),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Fecha de término (opcional):',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.ink,
+                          ),
+                        ),
+                      ),
+                      if (endAt != null)
+                        TextButton(
+                          onPressed: () => setDialogState(() => endAt = null),
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          child: const Text('Quitar', style: TextStyle(fontSize: 12)),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  OutlinedButton.icon(
+                    onPressed: () async {
+                      final picked = await showDatePicker(
+                        context: ctx,
+                        initialDate: endAt ?? startAt.add(const Duration(days: 7)),
+                        firstDate: DateTime.now().subtract(const Duration(days: 30)),
+                        lastDate: DateTime.now().add(const Duration(days: 365)),
+                      );
+                      if (picked != null) {
+                        setDialogState(() => endAt = picked);
+                      }
+                    },
+                    icon: const Icon(Icons.event_rounded, size: 16),
+                    label: Text(endAt != null ? dateFmt.format(endAt!) : 'Sin término fijo'),
+                  ),
+                  if (isInvalidEnd)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 8),
+                      child: Text(
+                        'La fecha de término debe ser posterior a la fecha de inicio.',
+                        style: TextStyle(color: AppColors.danger, fontSize: 12),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+              ElevatedButton(
+                onPressed: isInvalidEnd ? null : () => Navigator.pop(ctx, true),
+                child: const Text('Asignar'),
               ),
             ],
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
-            ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Asignar')),
-          ],
-        ),
+          );
+        },
       ),
     );
     if (confirmed != true || !mounted) return;
@@ -181,17 +272,25 @@ class _TrainerPageState extends State<TrainerPage> {
         groupId,
         chosen,
         daysPerWeek: daysPerWeek,
-        startAt: DateTime.now(),
+        startAt: startAt,
+        endAt: endAt,
       );
       if (mounted) {
+        final isFut = startAt.isAfter(DateTime.now());
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('"${chosen.title}" asignada al grupo — $daysPerWeek días/semana')),
+          SnackBar(
+            content: Text(
+              isFut
+                  ? '"${chosen.title}" programada para iniciar el ${dateFmt.format(startAt)}'
+                  : '"${chosen.title}" asignada al grupo — $daysPerWeek días/semana',
+            ),
+          ),
         );
       }
-    } catch (_) {
+    } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No se pudo crear la asignación.')),
+          SnackBar(content: Text('No se pudo crear la asignación: $e')),
         );
       }
     }
@@ -486,28 +585,62 @@ class _TrainerPageState extends State<TrainerPage> {
 
   Widget _assignmentBanner(Assignment a) {
     final fmt = DateFormat('d MMM', 'es');
+    final isFuture = a.isFuture();
+    final isExpired = a.isExpired();
+
+    String title;
+    String subtitle;
+    Color iconColor;
+    IconData icon;
+
+    if (isFuture) {
+      title = 'Asignación programada: ${a.workoutTitle}';
+      subtitle = 'Inicia el ${fmt.format(a.startAt)}${a.endAt != null ? ' · Termina el ${fmt.format(a.endAt!)}' : ''} · ${a.daysPerWeek} días/sem';
+      iconColor = AppColors.warn;
+      icon = Icons.schedule_rounded;
+    } else if (isExpired) {
+      title = 'Asignación finalizada: ${a.workoutTitle}';
+      subtitle = 'Venció el ${fmt.format(a.endAt!)} · ${a.daysPerWeek} días/sem';
+      iconColor = AppColors.muted;
+      icon = Icons.event_busy_rounded;
+    } else {
+      title = 'Asignación activa: ${a.workoutTitle}';
+      subtitle = 'Desde ${fmt.format(a.startAt)}${a.endAt != null ? ' hasta el ${fmt.format(a.endAt!)}' : ''} · ${a.daysPerWeek} días/sem';
+      iconColor = AppColors.brand;
+      icon = Icons.fitness_center_rounded;
+    }
+
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppColors.brandSoft,
+        color: isFuture ? AppColors.surfaceAlt : AppColors.brandSoft,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.brand.withValues(alpha: 0.3)),
+        border: Border.all(color: iconColor.withValues(alpha: 0.3)),
       ),
       child: Row(
         children: [
-          const Icon(Icons.fitness_center_rounded, size: 18, color: AppColors.brand),
+          Icon(icon, size: 18, color: iconColor),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Asignación activa: ${a.workoutTitle}',
-                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppColors.brandDark),
+                  title,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                    color: isFuture ? AppColors.ink : AppColors.brandDark,
+                  ),
                 ),
                 Text(
-                  'Desde ${fmt.format(a.startAt)} · ${a.daysPerWeek} días/semana',
-                  style: TextStyle(fontSize: 12, color: AppColors.brandDark.withValues(alpha: 0.7)),
+                  subtitle,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: isFuture
+                        ? AppColors.muted
+                        : AppColors.brandDark.withValues(alpha: 0.7),
+                  ),
                 ),
               ],
             ),

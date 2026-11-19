@@ -290,7 +290,7 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
         border: Border.all(color: AppColors.line),
       ),
       child: Text(
-        'Tu entrenador todavía no te asignó ninguna rutina.',
+        'Tu entrenador todavía no te asignó ninguna rutina vigente.',
         style: TextStyle(fontSize: 13, color: AppColors.muted),
       ),
     );
@@ -440,6 +440,18 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
 
   Future<void> _startAssigned(dynamic workout, Assignment a, String? groupId) async {
     if (groupId == null) return;
+    if (!a.isEffective()) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            a.isFuture()
+                ? 'Esta rutina está programada para iniciar el ${DateFormat("d 'de' MMMM", "es").format(a.startAt)}.'
+                : 'Esta rutina asignada ya finalizó.',
+          ),
+        ),
+      );
+      return;
+    }
     final s = AppStore.instance;
     final prefs = s.currentPrefs;
     final uid = s.currentUid;

@@ -34,6 +34,22 @@
 | **S4-03** | P1 | Unirse a grupo con código | **Aprobado** | Validación de PIN inválido con alertas correspondientes. Unirse con PIN correcto vincula al alumno al grupo, carga la rutina asignada y muestra el nombre del entrenador. Requiere índice compuesto en Firestore (`assignments`: `status ASC` + `createdAt DESC`). Corrección de regla de lectura en `completions` (`resource == null`) para permitir comprobación de idempotencia en transacciones. El alumno completa la rutina y se registra el cumplimiento (`completions`) en Firestore para el cálculo de adherencia del entrenador. Se implementó la pantalla de Perfil de Alumno (`MemberProfilePage`) permitiendo al entrenador inspeccionar el listado de ejercicios, series, repeticiones y cargas realizadas por el alumno. Se habilitó sincronización en tiempo real (`watchActiveAssignment`) en la vista del alumno y vinculación de sesión desde el detalle de rutina. Funcionalidad de retiro de alumnos verificada. |
 | **S4-04** | P1 | Asignación de rutina versionada | **Pendiente** | Aplazado por el usuario. Pendiente de evaluación posterior. |
 | **S4-05** | P1 | Alumno abandona / entrenador retira; revocación de acceso | **Aprobado** | Implementado y validado en dispositivo (commit `feat(S4-05)`). Al retirar un alumno o al salir este del grupo: (1) se elimina el doc `members/{uid}`; (2) se borran todos sus `completions` del grupo en batch, reseteando su historial de adherencia. El alumno ya no ve la rutina asignada. Para evitar que un alumno retirado vuelva a unirse sin consentimiento, se implementó rotación de código de invitación (`rotateCode`): el entrenador genera un nuevo PIN desde el Panel; los alumnos actuales permanecen; el código anterior queda inválido. Cambios en reglas Firestore: `completions allow delete: if groupOwner(gid)` y `groupInvites allow create: if signedIn()` (en lugar de `trainer()`). |
+| **S4-06** | P0 | Asignación con payload real y timestamps | **Aprobado** | Se verificó en Firebase Console y en la app que la creación de asignaciones persiste los campos en Firestore con tipos exactos `Timestamp` (`startAt`, `createdAt`), `trainerId` y `groupId` coherentes, snapshot de ejercicios completo y actualización reactiva inmediata en la app del alumno. |
+| **S4-07** | P1 | Vigencia temporal, asignaciones futuras y rechazo de fechas inválidas | **Aprobado** | Validado en dispositivo. Se incorporó configuración de fecha de inicio y fecha de fin (opcional) en el diálogo de asignación. Se implementó validación estricta (`endAt > startAt`) que bloquea el envío en la UI y es forzada en `firestore.rules`. El control de vigencia (`isEffective`) previene que asignaciones futuras se muestren como activas para el alumno antes de su fecha de inicio. Se actualizó el banner del entrenador para distinguir asignaciones programadas (futuras) de las activas vigentes. Se corrigió desbordamiento visual en el diálogo al seleccionar fecha de término. |
+
+---
+
+## Cambios de código — 18/19 noviembre 2026 (commit `feat(S4-06, S4-07)`)
+
+### Archivos modificados
+
+| Archivo | Cambio |
+|---|---|
+| `lib/models/assignment.dart` | Agregados métodos de vigencia temporal `isEffective()`, `isFuture()`, `isExpired()`. |
+| `lib/services/trainer_service.dart` | `createAssignment()` valida `endAt > startAt`. `getActiveAssignment()` y `watchActiveAssignment()` filtran por vigencia efectiva (`isEffective`). Añadido `getLatestAssignment()` para vista de gestión del entrenador. |
+| `lib/pages/trainer_page.dart` | Diálogo de asignación permite seleccionar fecha de inicio y fin opcional con datepicker. Valida en tiempo real que fin sea posterior a inicio. `_assignmentBanner` diferencia visualmente asignaciones programadas (futuras), activas y vencidas. Corregido overflow en fila de fecha de término. |
+| `lib/pages/join_group_page.dart` | `_startAssigned()` valida vigencia (`isEffective`) antes de permitir inicio de sesión. `_noAssignmentCard` clarifica mensaje cuando no hay rutina vigente. |
+| `firestore.rules` | `validAssignment()` exige `(!d.keys().hasAny(['endAt']) || (d.endAt is timestamp && d.endAt > d.startAt))` para rechazar fechas inválidas en backend. |
 
 ---
 

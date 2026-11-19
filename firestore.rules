@@ -181,6 +181,7 @@ service cloud.firestore {
           && text(d.workoutId,128) && text(d.workoutTitle,200)
           && d.exercisesSnapshot is list && d.exercisesSnapshot.size() <= 30
           && d.startAt is timestamp
+          && (!d.keys().hasAny(['endAt']) || (d.endAt is timestamp && d.endAt > d.startAt))
           && d.daysPerWeek is int && d.daysPerWeek >= 1 && d.daysPerWeek <= 7
           && text(d.timezone,64)
           && (d.status == 'active' || d.status == 'inactive')
