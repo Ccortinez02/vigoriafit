@@ -203,11 +203,19 @@ class TrainerService {
   }) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) throw StateError('Inicia sesión.');
+    final now = DateTime.now();
+    final todayStart = DateTime(now.year, now.month, now.day);
+    final maxAllowedFuture = todayStart.add(const Duration(days: 7, hours: 23, minutes: 59, seconds: 59));
+    if (startAt.isBefore(todayStart)) {
+      throw ArgumentError('La fecha de inicio no puede ser en el pasado.');
+    }
+    if (startAt.isAfter(maxAllowedFuture)) {
+      throw ArgumentError('Las rutinas adelantadas solo se pueden agregar hasta 7 días desde hoy.');
+    }
     if (endAt != null && !endAt.isAfter(startAt)) {
       throw ArgumentError('La fecha de término debe ser posterior a la fecha de inicio.');
     }
     final docRef = _groups.doc(groupId).collection('assignments').doc();
-    final now = DateTime.now();
     final exercisesSnapshot = Assignment.exerciseSnapshotFrom(w.exercises);
     // startAt: fecha elegida por el entrenador (puede ser futura).
     // createdAt: serverTimestamp (la regla exige createdAt == request.time).
@@ -263,59 +271,120 @@ class TrainerService {
     };
   }
 
-  /// Devuelve la asignación activa y actualmente vigente del grupo (no futura ni vencida),
-  /// o null si no existe.
-  static Future<Assignment?> getActiveAssignment(String groupId) async {
+  /// Trae la lista de todas las asignaciones activas dentro de la ventana:
+  /// - Retrasadas acumulables: hasta 3 días hacia el pasado.
+  /// - Adelantadas: hasta 7 días hacia el futuro.
+  /// Aquellas con más de 3 días de retraso se purgan automáticamente en Firestore.
+  /// NOTA: Se ordena en cliente para evitar requerir índice compuesto en Firestore.
+  static Future<List<Assignment>> getGroupAssignments(String groupId) async {
     final snap = await _groups
         .doc(groupId)
         .collection('assignments')
         .where('status', isEqualTo: 'active')
-        .orderBy('createdAt', descending: true)
-        .limit(10)
         .get();
-    if (snap.docs.isEmpty) return null;
+
     final now = DateTime.now();
+    final validList = <Assignment>[];
+    final toPurge = <DocumentReference>[];
+
     for (final doc in snap.docs) {
       final a = Assignment.fromMap(_normalizeAssignmentData({'id': doc.id, ...doc.data()}));
-      if (a.isEffective(now)) return a;
+      if (a.isPurgeable(now)) {
+        toPurge.add(doc.reference);
+      } else if (a.isWithinWindow(now)) {
+        validList.add(a);
+      }
     }
-    return null;
+
+    if (toPurge.isNotEmpty) {
+      _purgeOldAssignments(toPurge);
+    }
+
+    // Ordenar en cliente por startAt ascendente
+    validList.sort((a, b) => a.startAt.compareTo(b.startAt));
+    return validList;
   }
 
-  /// Devuelve la última asignación activa creada (para visualización en panel de entrenador,
-  /// incluyendo programaciones futuras o por vencer).
-  static Future<Assignment?> getLatestAssignment(String groupId) async {
-    final snap = await _groups
+  /// Escucha en tiempo real la lista de asignaciones activas y acumuladas dentro de la ventana permitida.
+  /// NOTA: Se ordena en cliente para evitar requerir índice compuesto en Firestore.
+  static Stream<List<Assignment>> watchGroupAssignments(String groupId) {
+    return _groups
         .doc(groupId)
         .collection('assignments')
         .where('status', isEqualTo: 'active')
-        .orderBy('createdAt', descending: true)
-        .limit(1)
-        .get();
-    if (snap.docs.isEmpty) return null;
-    final doc = snap.docs.first;
-    return Assignment.fromMap(_normalizeAssignmentData({'id': doc.id, ...doc.data()}));
+        .snapshots()
+        .map((snap) {
+      final now = DateTime.now();
+      final validList = <Assignment>[];
+      final toPurge = <DocumentReference>[];
+
+      for (final doc in snap.docs) {
+        final a = Assignment.fromMap(_normalizeAssignmentData({'id': doc.id, ...doc.data()}));
+        if (a.isPurgeable(now)) {
+          toPurge.add(doc.reference);
+        } else if (a.isWithinWindow(now)) {
+          validList.add(a);
+        }
+      }
+
+      if (toPurge.isNotEmpty) {
+        _purgeOldAssignments(toPurge);
+      }
+
+      // Ordenar en cliente por startAt ascendente
+      validList.sort((a, b) => a.startAt.compareTo(b.startAt));
+      return validList;
+    });
   }
 
-  /// Escucha en tiempo real la asignación activa y vigente del grupo (filtra asignaciones
-  /// futuras hasta que llegue su fecha de inicio).
-  static Stream<Assignment?> watchActiveAssignment(String groupId) =>
-      _groups
-          .doc(groupId)
-          .collection('assignments')
-          .where('status', isEqualTo: 'active')
-          .orderBy('createdAt', descending: true)
-          .limit(10)
-          .snapshots()
-          .map((snap) {
-        if (snap.docs.isEmpty) return null;
-        final now = DateTime.now();
-        for (final doc in snap.docs) {
-          final a = Assignment.fromMap(_normalizeAssignmentData({'id': doc.id, ...doc.data()}));
-          if (a.isEffective(now)) return a;
+  static void _purgeOldAssignments(List<DocumentReference> refs) async {
+    try {
+      final batch = _db.batch();
+      for (final ref in refs) {
+        batch.delete(ref);
+      }
+      await batch.commit();
+    } catch (_) {
+      try {
+        final batch = _db.batch();
+        for (final ref in refs) {
+          batch.update(ref, {'status': 'inactive'});
         }
-        return null;
-      });
+        await batch.commit();
+      } catch (_) {}
+    }
+  }
+
+  /// Elimina o inactiva una asignación específica del grupo.
+  static Future<void> deleteAssignment(String groupId, String assignmentId) async {
+    final ref = _groups.doc(groupId).collection('assignments').doc(assignmentId);
+    try {
+      await ref.delete();
+    } catch (_) {
+      await ref.update({'status': 'inactive'});
+    }
+  }
+
+  /// Devuelve la primera asignación activa y actualmente vigente del grupo, o null si no hay.
+  static Future<Assignment?> getActiveAssignment(String groupId) async {
+    final list = await getGroupAssignments(groupId);
+    final now = DateTime.now();
+    return list.where((a) => a.isEffective(now)).firstOrNull ?? list.firstOrNull;
+  }
+
+  /// Devuelve la última asignación activa creada (para compatibilidad).
+  static Future<Assignment?> getLatestAssignment(String groupId) async {
+    final list = await getGroupAssignments(groupId);
+    return list.lastOrNull;
+  }
+
+  /// Escucha en tiempo real la asignación activa y vigente del grupo (para compatibilidad).
+  static Stream<Assignment?> watchActiveAssignment(String groupId) {
+    return watchGroupAssignments(groupId).map((list) {
+      final now = DateTime.now();
+      return list.where((a) => a.isEffective(now)).firstOrNull ?? list.firstOrNull;
+    });
+  }
 
   /// Elimina a un miembro del grupo.
   static Future<void> removeMember(String groupId, String uid) =>

@@ -197,7 +197,7 @@ service cloud.firestore {
         allow update: if groupOwner(gid)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
           && (request.resource.data.status == 'active' || request.resource.data.status == 'inactive');
-        allow delete: if false;
+        allow delete: if groupOwner(gid);
       }
     }
     match /groupInvites/{code} {

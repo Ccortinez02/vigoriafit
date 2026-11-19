@@ -36,6 +36,11 @@
 | **S4-05** | P1 | Alumno abandona / entrenador retira; revocación de acceso | **Aprobado** | Implementado y validado en dispositivo (commit `feat(S4-05)`). Al retirar un alumno o al salir este del grupo: (1) se elimina el doc `members/{uid}`; (2) se borran todos sus `completions` del grupo en batch, reseteando su historial de adherencia. El alumno ya no ve la rutina asignada. Para evitar que un alumno retirado vuelva a unirse sin consentimiento, se implementó rotación de código de invitación (`rotateCode`): el entrenador genera un nuevo PIN desde el Panel; los alumnos actuales permanecen; el código anterior queda inválido. Cambios en reglas Firestore: `completions allow delete: if groupOwner(gid)` y `groupInvites allow create: if signedIn()` (en lugar de `trainer()`). |
 | **S4-06** | P0 | Asignación con payload real y timestamps | **Aprobado** | Se verificó en Firebase Console y en la app que la creación de asignaciones persiste los campos en Firestore con tipos exactos `Timestamp` (`startAt`, `createdAt`), `trainerId` y `groupId` coherentes, snapshot de ejercicios completo y actualización reactiva inmediata en la app del alumno. |
 | **S4-07** | P1 | Vigencia temporal, asignaciones futuras y rechazo de fechas inválidas | **Aprobado** | Validado en dispositivo. Se incorporó configuración de fecha de inicio y fecha de fin (opcional) en el diálogo de asignación. Se implementó validación estricta (`endAt > startAt`) que bloquea el envío en la UI y es forzada en `firestore.rules`. El control de vigencia (`isEffective`) previene que asignaciones futuras se muestren como activas para el alumno antes de su fecha de inicio. Se actualizó el banner del entrenador para distinguir asignaciones programadas (futuras) de las activas vigentes. Se corrigió desbordamiento visual en el diálogo al seleccionar fecha de término. |
+| **S4-08** | P1 | Acumulación de asignaciones en lista | **Aprobado** | Validado en dispositivo. El entrenador puede crear múltiples asignaciones que se acumulan en lista (ya no se reemplazan). La vista del entrenador muestra todas las rutinas asignadas con estado visual (Activa hoy / Programada / Retrasada) y botón de eliminación individual. La vista del alumno también muestra la lista completa con badges de estado. Se corrigió error de query Firestore: se eliminó `orderBy('startAt')` del query y el ordenamiento se realiza en cliente para evitar requerir índice compuesto. Se reestructuró `_refresh()` del entrenador para cargar recursos de forma independiente (con `.catchError()`), evitando que el fallo de uno impida mostrar los demás. |
+| **S4-09** | P1 | Límite de retrasadas (máx. 3 días) con purga automática | **Aprobado** | Validado en dispositivo. Las rutinas cuya vigencia expiró hace más de 3 días se purgan automáticamente de Firestore (delete en batch; si falla por permisos, se marcan `status: inactive`). Las retrasadas dentro del límite de 3 días se acumulan con badge "Retrasada" y el alumno puede iniciarlas. La regla Firestore `assignments allow delete: if groupOwner(gid)` permite la depuración automática. |
+| **S4-10** | P0 | No se puede iniciar otra sesión mientras hay una activa | **Aprobado** | Validado en dispositivo. Si el alumno intenta iniciar una rutina asignada mientras ya tiene una sesión activa de distinta rutina, se muestra SnackBar con el nombre de la sesión en curso y se bloquea el inicio. Si la sesión activa es de la misma rutina, se navega directamente a ella. |
+| **S4-11** | P1 | Límite de adelantadas (máx. 7 días desde hoy) | **Aprobado** | Validado en dispositivo. El date picker de fecha de inicio en el diálogo de asignación solo permite elegir desde hoy hasta 7 días en el futuro (no se permiten fechas pasadas). La validación también está reforzada en `createAssignment()` del servicio. Las rutinas ya asignadas que superen los 7 días de anticipación son filtradas y no aparecen en la lista. |
+| **S4-12** | P1 | Secciones colapsables en panel del entrenador | **Aprobado** | Validado en dispositivo. Las secciones "Rutinas asignadas (N)" y "Tus alumnos (N)" en `trainer_page.dart` son ahora colapsables: el encabezado actúa como toggle con ícono de flecha (expand/collapse). Ambas secciones inician expandidas. Se eliminó el texto auxiliar que causaba overflow de 53 px en la cabecera de asignaciones. |
 
 ---
 
@@ -68,4 +73,21 @@
 1. `completions`: `allow update: if false; allow delete: if groupOwner(gid);`
 2. `groupInvites`: `allow create: if signedIn() && ...` (reemplaza `trainer()`)
 3. `groups/{gid}`: bloque `allow update` expandido con cláusula OR para rotación de código
+
+---
+
+## Cambios de código — 18/19 noviembre 2026 (commit `feat(S4-08-12)`)
+
+### Archivos modificados
+
+| Archivo | Cambio |
+|---|---|
+| `lib/models/assignment.dart` | Agregados métodos `isOverdue()`, `isWithinWindow()`, `isPurgeable()` para control de ventana temporal de retrasadas (máx. 3 días) y adelantadas (máx. 7 días). |
+| `lib/services/trainer_service.dart` | `createAssignment()` valida que `startAt` no sea en el pasado ni supere 7 días adelantados. `getGroupAssignments()` y `watchGroupAssignments()` retornan lista acumulada con filtro de ventana y purga automática de retrasadas >3 días (sin `orderBy` en Firestore; ordenamiento en cliente). `deleteAssignment()` elimina o inactiva asignaciones individuales. `_purgeOldAssignments()` purga en batch con fallback a `status: inactive`. `_refresh()` en `trainer_page.dart` carga cada recurso de forma independiente. |
+| `lib/pages/trainer_page.dart` | Reemplazado banner único por lista acumulada de asignaciones con `_assignmentBanner()` y botón de eliminar individual. Date picker restringido a hoy–hoy+7 días (no permite pasado). Secciones "Rutinas asignadas" y "Tus alumnos" convertidas a colapsables con toggle de encabezado. Estados colapsables `_assignmentsExpanded` y `_membersExpanded`. Eliminado texto que causaba overflow de 53 px. |
+| `lib/pages/join_group_page.dart` | Reemplazada tarjeta única de asignación por lista reactiva (`watchGroupAssignments`) con badges de estado (Activa hoy / Programada / Retrasada). Bloquea inicio de rutinas programadas; permite retrasadas dentro de los 3 días. |
+| `firestore.rules` | `assignments/{aid}`: `allow delete: if groupOwner(gid)` (antes `delete: if false`) para habilitar purga automática y eliminación manual. |
+
+### Cambios en Firebase Console requeridos (aplicados manualmente)
+1. `assignments/{aid}`: `allow delete: if groupOwner(gid);` (antes `if false`)
 

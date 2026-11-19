@@ -97,10 +97,40 @@ class Assignment {
     return status == 'active' && startAt.isAfter(current);
   }
 
-  /// Indica si la asignación ya venció según su endAt.
+  /// Indica si la asignación ya venció según su endAt o startAt.
   bool isExpired([DateTime? now]) {
     final current = now ?? DateTime.now();
-    return endAt != null && endAt!.isBefore(current);
+    final effectiveEnd = endAt ?? startAt;
+    return effectiveEnd.isBefore(current);
+  }
+
+  /// Indica si la asignación está retrasada (pasada pero dentro del límite de 3 días acumulables).
+  bool isOverdue([DateTime? now]) {
+    final current = now ?? DateTime.now();
+    final effectiveEnd = endAt ?? startAt;
+    final minDate = DateTime(current.year, current.month, current.day).subtract(const Duration(days: 3));
+    return effectiveEnd.isBefore(current) && !effectiveEnd.isBefore(minDate);
+  }
+
+  /// Indica si la asignación está dentro de la ventana permitida:
+  /// - No tiene más de 3 días de retraso hacia el pasado.
+  /// - No está adelantada por más de 7 días hacia el futuro.
+  bool isWithinWindow([DateTime? now]) {
+    final current = now ?? DateTime.now();
+    final effectiveEnd = endAt ?? startAt;
+    final minDate = DateTime(current.year, current.month, current.day).subtract(const Duration(days: 3));
+    if (effectiveEnd.isBefore(minDate)) return false; // Retrasada por más de 3 días
+    final maxDate = DateTime(current.year, current.month, current.day).add(const Duration(days: 7, hours: 23, minutes: 59, seconds: 59));
+    if (startAt.isAfter(maxDate)) return false; // Más de 7 días adelantada
+    return true;
+  }
+
+  /// Indica si la asignación excedió los 3 días de retraso y debe purgarse.
+  bool isPurgeable([DateTime? now]) {
+    final current = now ?? DateTime.now();
+    final effectiveEnd = endAt ?? startAt;
+    final minDate = DateTime(current.year, current.month, current.day).subtract(const Duration(days: 3));
+    return effectiveEnd.isBefore(minDate);
   }
 
   /// Construye un snapshot de ejercicios a partir de la lista de [Exercise].

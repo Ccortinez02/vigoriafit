@@ -75,8 +75,8 @@ groups/{gid}/completions/{sessionId}
 |---------|-------|------|------------|--------|
 | `groups/{gid}` | trainer (claim) | owner \| member | groupOwner (solo campos de asignación legacy) | ❌ |
 | `groups/{gid}/members/{uid}` | owner (con código válido) | owner \| groupOwner | ❌ | owner \| groupOwner |
-| `groups/{gid}/assignments/{aid}` | groupOwner + validación completa | groupOwner \| member | groupOwner (solo `status`) | ❌ |
-| `groups/{gid}/completions/{sid}` | member (sid==sessionId, userId==auth.uid) | groupOwner \| owner-del-completion | ❌ | ❌ |
+| `groups/{gid}/assignments/{aid}` | groupOwner + validación completa | groupOwner \| member | groupOwner (solo `status`) | groupOwner |
+| `groups/{gid}/completions/{sid}` | member (sid==sessionId, userId==auth.uid) | groupOwner \| owner-del-completion | ❌ | groupOwner |
 
 **El claim `trainer`** viene exclusivamente del JWT de Firebase Auth (`request.auth.token.get('trainer', false)`). No es un campo en el perfil del usuario.
 
@@ -103,3 +103,11 @@ El `sessionId` (UUID generado en cliente) actúa como ID del documento en `compl
 
 - `test/firestore/access.test.cjs` — 12 tests de reglas Firestore (node:test + @firebase/rules-unit-testing)
 - `test/` — 98 tests Flutter (unit)
+
+## Acumulación de asignaciones y políticas temporales (S4-08 a S4-12)
+
+- **Acumulación en lista (S4-08):** El entrenador puede asignar múltiples rutinas al grupo sin sobrescribir las anteriores. Tanto el panel del entrenador como la pantalla del alumno consumen la lista reactiva de asignaciones vigentes (`watchGroupAssignments`).
+- **Retención y purga de retrasadas (S4-09):** Las asignaciones con vigencia expirada se conservan como "Retrasadas" hasta un máximo de 3 días hacia el pasado para que los alumnos puedan ponerse al día. Superados los 3 días de retraso, se depuran y eliminan automáticamente de Firestore.
+- **Exclusión de sesión concurrente (S4-10):** El alumno no puede iniciar una sesión de rutina asignada si ya cuenta con una sesión activa en curso de otra rutina.
+- **Límite de adelantadas (S4-11):** Las asignaciones futuras solo pueden programarse hasta 7 días a partir del día actual (no se permite programar fechas en el pasado).
+- **Secciones colapsables y UI limpia (S4-12):** En el panel del entrenador, las listas de asignaciones y de alumnos cuentan con encabezados colapsables/desplegables para optimizar el espacio visual en pantalla.

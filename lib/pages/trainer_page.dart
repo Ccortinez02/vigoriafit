@@ -24,7 +24,9 @@ class _TrainerPageState extends State<TrainerPage> {
   bool _loadingMembers = false;
   List<GroupMember> _members = [];
   Map<String, dynamic>? _group;
-  Assignment? _activeAssignment;
+  List<Assignment> _assignments = [];
+  bool _assignmentsExpanded = true;
+  bool _membersExpanded = true;
 
   @override
   void initState() {
@@ -61,20 +63,25 @@ class _TrainerPageState extends State<TrainerPage> {
     if (groupId == null) return;
     setState(() => _loadingMembers = true);
     try {
-      final results = await Future.wait([
-        TrainerService.getGroup(groupId),
-        TrainerService.membersWithAdherence(groupId),
-        TrainerService.getLatestAssignment(groupId),
-      ]);
+      // Cargamos cada recurso de forma independiente para que un error en uno
+      // no impida mostrar los demás (ej. si assignments falla, aún mostramos miembros).
+      final groupFut = TrainerService.getGroup(groupId);
+      final membersFut = TrainerService.membersWithAdherence(groupId);
+      final assignmentsFut = TrainerService.getGroupAssignments(groupId);
+
+      final groupData = await groupFut.catchError((_) => null);
+      final members = await membersFut.catchError((_) => <GroupMember>[]);
+      final assignments = await assignmentsFut.catchError((_) => <Assignment>[]);
+
       if (mounted) {
         setState(() {
-          _group = results[0] as Map<String, dynamic>?;
-          _members = results[1] as List<GroupMember>;
-          _activeAssignment = results[2] as Assignment?;
+          _group = groupData as Map<String, dynamic>?;
+          _members = members as List<GroupMember>;
+          _assignments = assignments as List<Assignment>;
         });
       }
-    } catch (_) {
-      // sin conexión: se queda con lo último que tenía
+    } catch (e) {
+      // error inesperado: se queda con lo último que tenía
     } finally {
       if (mounted) setState(() => _loadingMembers = false);
     }
@@ -147,12 +154,18 @@ class _TrainerPageState extends State<TrainerPage> {
     DateTime startAt = DateTime.now();
     DateTime? endAt;
     final dateFmt = DateFormat('d/MM/yyyy', 'es');
+    final today = DateTime.now();
+    final todayOnly = DateTime(today.year, today.month, today.day);
+    final maxAllowedFuture = todayOnly.add(const Duration(days: 7, hours: 23, minutes: 59, seconds: 59));
 
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) {
           final isInvalidEnd = endAt != null && !endAt!.isAfter(startAt);
+          final isTooFuture = startAt.isAfter(maxAllowedFuture);
+          final hasError = isInvalidEnd || isTooFuture;
+
           return AlertDialog(
             title: const Text('Configurar asignación'),
             content: SingleChildScrollView(
@@ -182,18 +195,28 @@ class _TrainerPageState extends State<TrainerPage> {
                     onChanged: (v) => setDialogState(() => daysPerWeek = v.round()),
                   ),
                   const SizedBox(height: 12),
-                  Text(
-                    'Fecha de inicio:',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.ink),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Fecha de inicio:',
+                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.ink),
+                        ),
+                      ),
+                      Text(
+                        'Máx. +7 días',
+                        style: TextStyle(fontSize: 11, color: AppColors.muted),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 4),
                   OutlinedButton.icon(
                     onPressed: () async {
                       final picked = await showDatePicker(
                         context: ctx,
-                        initialDate: startAt,
-                        firstDate: DateTime.now().subtract(const Duration(days: 30)),
-                        lastDate: DateTime.now().add(const Duration(days: 365)),
+                        initialDate: startAt.isAfter(maxAllowedFuture) ? todayOnly : startAt,
+                        firstDate: todayOnly, // Solo hoy o futuro
+                        lastDate: todayOnly.add(const Duration(days: 7)),
                       );
                       if (picked != null) {
                         setDialogState(() => startAt = picked);
@@ -202,6 +225,14 @@ class _TrainerPageState extends State<TrainerPage> {
                     icon: const Icon(Icons.calendar_today_rounded, size: 16),
                     label: Text(dateFmt.format(startAt)),
                   ),
+                  if (isTooFuture)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 4),
+                      child: Text(
+                        'Solo se pueden adelantar hasta 7 días desde hoy.',
+                        style: TextStyle(color: AppColors.danger, fontSize: 11.5),
+                      ),
+                    ),
                   const SizedBox(height: 12),
                   Row(
                     children: [
@@ -233,7 +264,7 @@ class _TrainerPageState extends State<TrainerPage> {
                       final picked = await showDatePicker(
                         context: ctx,
                         initialDate: endAt ?? startAt.add(const Duration(days: 7)),
-                        firstDate: DateTime.now().subtract(const Duration(days: 30)),
+                        firstDate: todayOnly,
                         lastDate: DateTime.now().add(const Duration(days: 365)),
                       );
                       if (picked != null) {
@@ -257,7 +288,7 @@ class _TrainerPageState extends State<TrainerPage> {
             actions: [
               TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
               ElevatedButton(
-                onPressed: isInvalidEnd ? null : () => Navigator.pop(ctx, true),
+                onPressed: hasError ? null : () => Navigator.pop(ctx, true),
                 child: const Text('Asignar'),
               ),
             ],
@@ -282,7 +313,7 @@ class _TrainerPageState extends State<TrainerPage> {
             content: Text(
               isFut
                   ? '"${chosen.title}" programada para iniciar el ${dateFmt.format(startAt)}'
-                  : '"${chosen.title}" asignada al grupo — $daysPerWeek días/semana',
+                  : '"${chosen.title}" agregada a la lista de asignaciones',
             ),
           ),
         );
@@ -295,6 +326,42 @@ class _TrainerPageState extends State<TrainerPage> {
       }
     }
     await _refresh();
+  }
+
+  Future<void> _deleteAssignment(Assignment a) async {
+    final groupId = AppStore.instance.groupId;
+    if (groupId == null) return;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Quitar asignación'),
+        content: Text('¿Deseas quitar la rutina "${a.workoutTitle}" de las asignaciones del grupo?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: AppColors.danger),
+            child: const Text('Quitar'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+    try {
+      await TrainerService.deleteAssignment(groupId, a.id);
+      await _refresh();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Rutina "${a.workoutTitle}" retirada.')),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No se pudo quitar la asignación.')),
+        );
+      }
+    }
   }
 
   bool _rotatingCode = false;
@@ -438,7 +505,6 @@ class _TrainerPageState extends State<TrainerPage> {
 
   Widget _groupView() {
     final code = AppStore.instance.groupCode ?? '------';
-    final assignedTitle = _group?['assignedWorkoutTitle'] as String?;
     return RefreshIndicator(
       onRefresh: _refresh,
       child: ListView(
@@ -513,8 +579,7 @@ class _TrainerPageState extends State<TrainerPage> {
             ),
           ),
           const SizedBox(height: 18),
-          if (_activeAssignment != null) _assignmentBanner(_activeAssignment!),
-          const SizedBox(height: 10),
+          // Botón para asignar nueva rutina
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
@@ -527,57 +592,101 @@ class _TrainerPageState extends State<TrainerPage> {
                   borderRadius: BorderRadius.circular(14),
                 ),
               ),
-              icon: const Icon(Icons.assignment_rounded, size: 18),
-              label: Text(
-                assignedTitle == null
-                    ? 'Asignar una rutina al grupo'
-                    : 'Nueva asignación (actual: $assignedTitle)',
+              icon: const Icon(Icons.add_task_rounded, size: 18),
+              label: const Text('Asignar rutina al grupo'),
+            ),
+          ),
+          const SizedBox(height: 16),
+          // Lista de rutinas asignadas acumuladas (colapsable)
+          if (_assignments.isNotEmpty) ...[
+            InkWell(
+              onTap: () => setState(() => _assignmentsExpanded = !_assignmentsExpanded),
+              borderRadius: BorderRadius.circular(10),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  children: [
+                    Text(
+                      'Rutinas asignadas (${_assignments.length})',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.ink,
+                      ),
+                    ),
+                    const Spacer(),
+                    Icon(
+                      _assignmentsExpanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+                      color: AppColors.muted,
+                      size: 20,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            if (_assignmentsExpanded) ...[
+              const SizedBox(height: 8),
+              ..._assignments.map((a) => Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: _assignmentBanner(a),
+                  )),
+            ],
+            const SizedBox(height: 10),
+          ],
+          const SizedBox(height: 4),
+          // Alumnos (colapsable)
+          InkWell(
+            onTap: () => setState(() => _membersExpanded = !_membersExpanded),
+            borderRadius: BorderRadius.circular(10),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                children: [
+                  Text(
+                    'Tus alumnos (${_members.length})',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.ink,
+                    ),
+                  ),
+                  const Spacer(),
+                  if (_loadingMembers)
+                    const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: AppColors.brand,
+                      ),
+                    )
+                  else
+                    Icon(
+                      _membersExpanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+                      color: AppColors.muted,
+                      size: 20,
+                    ),
+                ],
               ),
             ),
           ),
-          const SizedBox(height: 22),
-          Row(
-            children: [
-              Text(
-                'Tus alumnos (${_members.length})',
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w800,
-                  color: AppColors.ink,
+          if (_membersExpanded) ...[
+            const SizedBox(height: 8),
+            if (_members.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Text(
+                  'Todavía no se une nadie. Comparte el código de arriba.',
+                  style: TextStyle(fontSize: 13, color: AppColors.muted),
                 ),
-              ),
-              const Spacer(),
-              if (_loadingMembers)
-                const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: AppColors.brand,
-                  ),
-                )
-              else
-                IconButton(
-                  onPressed: _refresh,
-                  icon: const Icon(
-                    Icons.refresh_rounded,
-                    size: 20,
-                    color: AppColors.brand,
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          if (_members.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 20),
-              child: Text(
-                'Todavía no se une nadie. Comparte el código de arriba.',
-                style: TextStyle(fontSize: 13, color: AppColors.muted),
-              ),
-            )
-          else
-            ..._members.map((m) => _memberTile(m, _activeAssignment?.daysPerWeek ?? 0)),
+              )
+            else
+              ..._members.map((m) {
+                final effectiveAssignment = _assignments.where((a) => a.isEffective()).firstOrNull;
+                final days = effectiveAssignment?.daysPerWeek ?? (_assignments.isNotEmpty ? _assignments.first.daysPerWeek : 0);
+                return _memberTile(m, days);
+              }),
+          ],
         ],
       ),
     );
@@ -586,7 +695,8 @@ class _TrainerPageState extends State<TrainerPage> {
   Widget _assignmentBanner(Assignment a) {
     final fmt = DateFormat('d MMM', 'es');
     final isFuture = a.isFuture();
-    final isExpired = a.isExpired();
+    final isOverdue = a.isOverdue();
+    final isEffective = a.isEffective();
 
     String title;
     String subtitle;
@@ -594,26 +704,33 @@ class _TrainerPageState extends State<TrainerPage> {
     IconData icon;
 
     if (isFuture) {
-      title = 'Asignación programada: ${a.workoutTitle}';
-      subtitle = 'Inicia el ${fmt.format(a.startAt)}${a.endAt != null ? ' · Termina el ${fmt.format(a.endAt!)}' : ''} · ${a.daysPerWeek} días/sem';
+      title = 'Programada: ${a.workoutTitle}';
+      subtitle = 'Inicia el ${fmt.format(a.startAt)}${a.endAt != null ? ' · Fin: ${fmt.format(a.endAt!)}' : ''} · ${a.daysPerWeek} d/sem';
       iconColor = AppColors.warn;
       icon = Icons.schedule_rounded;
-    } else if (isExpired) {
-      title = 'Asignación finalizada: ${a.workoutTitle}';
-      subtitle = 'Venció el ${fmt.format(a.endAt!)} · ${a.daysPerWeek} días/sem';
-      iconColor = AppColors.muted;
-      icon = Icons.event_busy_rounded;
-    } else {
-      title = 'Asignación activa: ${a.workoutTitle}';
-      subtitle = 'Desde ${fmt.format(a.startAt)}${a.endAt != null ? ' hasta el ${fmt.format(a.endAt!)}' : ''} · ${a.daysPerWeek} días/sem';
+    } else if (isOverdue) {
+      title = 'Retrasada: ${a.workoutTitle}';
+      subtitle = 'Asignada para ${fmt.format(a.startAt)}${a.endAt != null ? ' - ${fmt.format(a.endAt!)}' : ''} · ${a.daysPerWeek} d/sem';
+      iconColor = Colors.orange;
+      icon = Icons.history_rounded;
+    } else if (isEffective) {
+      title = 'Activa hoy: ${a.workoutTitle}';
+      subtitle = 'Desde ${fmt.format(a.startAt)}${a.endAt != null ? ' hasta ${fmt.format(a.endAt!)}' : ''} · ${a.daysPerWeek} d/sem';
       iconColor = AppColors.brand;
       icon = Icons.fitness_center_rounded;
+    } else {
+      title = 'Asignación: ${a.workoutTitle}';
+      subtitle = '${fmt.format(a.startAt)} · ${a.daysPerWeek} d/sem';
+      iconColor = AppColors.muted;
+      icon = Icons.event_note_rounded;
     }
 
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
       decoration: BoxDecoration(
-        color: isFuture ? AppColors.surfaceAlt : AppColors.brandSoft,
+        color: isFuture
+            ? AppColors.surfaceAlt
+            : (isOverdue ? Colors.orange.withValues(alpha: 0.08) : AppColors.brandSoft),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: iconColor.withValues(alpha: 0.3)),
       ),
@@ -630,20 +747,27 @@ class _TrainerPageState extends State<TrainerPage> {
                   style: TextStyle(
                     fontWeight: FontWeight.w700,
                     fontSize: 13,
-                    color: isFuture ? AppColors.ink : AppColors.brandDark,
+                    color: isFuture ? AppColors.ink : (isOverdue ? Colors.deepOrange : AppColors.brandDark),
                   ),
                 ),
                 Text(
                   subtitle,
                   style: TextStyle(
-                    fontSize: 12,
+                    fontSize: 11.5,
                     color: isFuture
                         ? AppColors.muted
-                        : AppColors.brandDark.withValues(alpha: 0.7),
+                        : (isOverdue ? Colors.black87 : AppColors.brandDark.withValues(alpha: 0.7)),
                   ),
                 ),
               ],
             ),
+          ),
+          IconButton(
+            onPressed: () => _deleteAssignment(a),
+            icon: const Icon(Icons.close_rounded, size: 18),
+            color: AppColors.muted,
+            tooltip: 'Quitar rutina asignada',
+            visualDensity: VisualDensity.compact,
           ),
         ],
       ),
@@ -675,12 +799,13 @@ class _TrainerPageState extends State<TrainerPage> {
           onTap: () {
             final gid = AppStore.instance.groupId;
             if (gid == null) return;
+            final effectiveAssignment = _assignments.where((a) => a.isEffective()).firstOrNull;
             Navigator.of(context).push(
               MaterialPageRoute(
                 builder: (_) => MemberProfilePage(
                   groupId: gid,
                   member: m,
-                  activeAssignment: _activeAssignment,
+                  activeAssignment: effectiveAssignment,
                 ),
               ),
             ).then((_) => _refresh());

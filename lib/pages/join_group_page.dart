@@ -23,8 +23,8 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
   final _codeCtrl = TextEditingController();
   bool _busy = false;
   Map<String, dynamic>? _group;
-  Assignment? _assignment;
-  StreamSubscription<Assignment?>? _assignmentSub;
+  List<Assignment> _assignments = [];
+  StreamSubscription<List<Assignment>>? _assignmentsSub;
 
   @override
   void initState() {
@@ -38,15 +38,15 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
   void _subscribeAssignment() {
     final groupId = AppStore.instance.groupId;
     if (groupId == null) return;
-    _assignmentSub?.cancel();
-    _assignmentSub = TrainerService.watchActiveAssignment(groupId).listen((a) {
-      if (mounted) setState(() => _assignment = a);
+    _assignmentsSub?.cancel();
+    _assignmentsSub = TrainerService.watchGroupAssignments(groupId).listen((list) {
+      if (mounted) setState(() => _assignments = list);
     });
   }
 
   @override
   void dispose() {
-    _assignmentSub?.cancel();
+    _assignmentsSub?.cancel();
     _codeCtrl.dispose();
     super.dispose();
   }
@@ -56,12 +56,12 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
     if (groupId == null) return;
     final results = await Future.wait([
       TrainerService.getGroup(groupId),
-      TrainerService.getActiveAssignment(groupId),
+      TrainerService.getGroupAssignments(groupId),
     ]);
     if (mounted) {
       setState(() {
         _group = results[0] as Map<String, dynamic>?;
-        _assignment = results[1] as Assignment?;
+        _assignments = results[1] as List<Assignment>;
       });
     }
   }
@@ -136,9 +136,9 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
     try {
       await TrainerService.leaveGroup(groupId, s.localUserId);
       if (!mounted || s.currentUid != uid) return;
-      _assignmentSub?.cancel();
+      _assignmentsSub?.cancel();
       await s.leaveGroup();
-      if (mounted) setState(() { _group = null; _assignment = null; });
+      if (mounted) setState(() { _group = null; _assignments = []; });
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -256,19 +256,32 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
             ),
           ),
           const SizedBox(height: 18),
-          Text(
-            'Planificación asignada',
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w800,
-              color: AppColors.ink,
-            ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Planificación asignada',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.ink,
+                ),
+              ),
+              if (_assignments.isNotEmpty)
+                Text(
+                  '${_assignments.length} ${_assignments.length == 1 ? 'rutina' : 'rutinas'}',
+                  style: TextStyle(fontSize: 12, color: AppColors.muted),
+                ),
+            ],
           ),
           const SizedBox(height: 8),
-          if (_assignment == null)
+          if (_assignments.isEmpty)
             _noAssignmentCard()
           else
-            _assignmentCard(_assignment!),
+            ..._assignments.map((a) => Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: _assignmentCard(a),
+                )),
           const SizedBox(height: 30),
           TextButton.icon(
             onPressed: _leave,
@@ -300,17 +313,22 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
     final fmt = DateFormat('d MMM', 'es');
     final workout = Workouts.byId(a.workoutId);
     final groupId = AppStore.instance.groupId;
+    final isFuture = a.isFuture();
+    final isOverdue = a.isOverdue();
+    final isEffective = a.isEffective();
 
     return Container(
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.line),
+        border: Border.all(
+          color: isOverdue ? Colors.orange.withValues(alpha: 0.5) : AppColors.line,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Cabecera con nombre de rutina
+          // Cabecera con nombre de rutina y badge de estado
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
             child: Row(
@@ -319,13 +337,19 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
                   width: 36,
                   height: 36,
                   decoration: BoxDecoration(
-                    color: AppColors.brandSoft,
+                    color: isOverdue
+                        ? Colors.orange.withValues(alpha: 0.15)
+                        : (isFuture ? AppColors.surfaceAlt : AppColors.brandSoft),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: const Icon(
-                    Icons.fitness_center_rounded,
+                  child: Icon(
+                    isOverdue
+                        ? Icons.history_rounded
+                        : (isFuture ? Icons.schedule_rounded : Icons.fitness_center_rounded),
                     size: 18,
-                    color: AppColors.brand,
+                    color: isOverdue
+                        ? Colors.deepOrange
+                        : (isFuture ? AppColors.muted : AppColors.brand),
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -346,6 +370,25 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
                         style: TextStyle(fontSize: 12, color: AppColors.muted),
                       ),
                     ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: isEffective
+                        ? AppColors.brandSoft
+                        : (isOverdue ? Colors.orange.withValues(alpha: 0.15) : AppColors.surfaceAlt),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    isEffective ? 'Activa hoy' : (isOverdue ? 'Retrasada' : 'Programada'),
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: isEffective
+                          ? AppColors.brandDark
+                          : (isOverdue ? Colors.deepOrange : AppColors.muted),
+                    ),
                   ),
                 ),
               ],
@@ -386,8 +429,6 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
                     onPressed: () => Navigator.of(context).push(
                       MaterialPageRoute(
                         builder: (_) => WorkoutDetailPage(
-                          // Usa exercisesSnapshot para mostrar los ejercicios
-                          // tal como fueron asignados, no la versión actual del catálogo.
                           workout: a.workoutFromSnapshot(workout),
                           assignmentId: a.id,
                           groupId: groupId,
@@ -405,8 +446,18 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
                 Expanded(
                   child: ElevatedButton.icon(
                     onPressed: () => _startAssigned(workout, a, groupId),
-                    icon: const Icon(Icons.play_arrow_rounded, size: 18),
-                    label: const Text('Iniciar'),
+                    icon: Icon(
+                      isFuture ? Icons.lock_clock_rounded : Icons.play_arrow_rounded,
+                      size: 18,
+                    ),
+                    label: Text(isFuture ? 'Programada' : 'Iniciar'),
+                    style: isFuture
+                        ? ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.surfaceAlt,
+                            foregroundColor: AppColors.muted,
+                            elevation: 0,
+                          )
+                        : null,
                   ),
                 ),
               ],
@@ -440,14 +491,20 @@ class _JoinGroupPageState extends State<JoinGroupPage> {
 
   Future<void> _startAssigned(dynamic workout, Assignment a, String? groupId) async {
     if (groupId == null) return;
-    if (!a.isEffective()) {
+    if (a.isFuture()) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            a.isFuture()
-                ? 'Esta rutina está programada para iniciar el ${DateFormat("d 'de' MMMM", "es").format(a.startAt)}.'
-                : 'Esta rutina asignada ya finalizó.',
+            'Esta rutina está programada para iniciar el ${DateFormat("d 'de' MMMM", "es").format(a.startAt)}.',
           ),
+        ),
+      );
+      return;
+    }
+    if (a.isPurgeable()) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Esta rutina ya expiró (más de 3 días de retraso).'),
         ),
       );
       return;
